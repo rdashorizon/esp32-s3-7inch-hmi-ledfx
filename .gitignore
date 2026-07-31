@@ -1,0 +1,22 @@
+# Build outputs
+.pio/
+.pioenvs/
+.piolibdeps/
+build/
+*.elf
+*.bin
+*.uf2
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+secrets.h
+env.*
