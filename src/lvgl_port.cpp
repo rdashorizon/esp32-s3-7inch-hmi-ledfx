@@ -58,7 +58,14 @@ void lvgl_init(void) {
 }
 
 void lvgl_tick(void) {
-    uint32_t ms = my_tick();
-    lv_tick_inc(ms);
+    // lv_tick_inc() expects the elapsed time since the last call, not the
+    // absolute millis() value — feeding it the absolute time makes LVGL think
+    // millions of milliseconds pass each iteration and breaks all animation
+    // and press timing.
+    static uint32_t last = 0;
+    uint32_t now = my_tick();
+    if (last == 0) last = now;
+    lv_tick_inc(now - last);
+    last = now;
     lv_timer_handler();
 }

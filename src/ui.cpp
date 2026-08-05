@@ -248,7 +248,7 @@ static void build_global_screen(void) {
 // ---- Tab switching ---------------------------------------------------------
 static void tab_changed_cb(lv_event_t *e) {
     lv_obj_t *btns = lv_event_get_target(e);
-    uint32_t idx = lv_tabview_get_tab_active(btns);
+    uint32_t idx = lv_tabview_get_tab_act(btns);
     if (idx == 0) rebuild_scene_grid();
     if (idx == 1) rebuild_virt_list();
 }
@@ -271,8 +271,8 @@ void ui_init(void) {
     lv_label_set_text(s_status_label, "Ready");
 
     // Grids/lists
-    static lv_coord_t col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TR(8), LV_GRID_TEMPLATE_LAST};
-    static lv_coord_t row_dsc[] = {80, 80, 80, 80, 80, 80, LV_GRID_TR(8), LV_GRID_TEMPLATE_LAST};
+    static lv_coord_t col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+    static lv_coord_t row_dsc[] = {80, 80, 80, 80, 80, 80, LV_GRID_TEMPLATE_LAST};
     s_scene_grid = lv_obj_create(s_tab_scenes);
     lv_obj_set_size(s_scene_grid, LV_PCT(100), LV_PCT(100));
     lv_obj_set_grid_dsc_array(s_scene_grid, col_dsc, row_dsc);

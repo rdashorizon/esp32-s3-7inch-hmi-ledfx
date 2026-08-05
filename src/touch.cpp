@@ -69,8 +69,8 @@ void touch_init(void) {
     gt911_write(0x8040, &cmd, 1);
 }
 
-bool touch_read(lv_indev_t *indev, lv_indev_data_t *data) {
-    (void)indev;
+void touch_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
+    (void)drv;
     uint8_t status = 0;
     gt911_read(0x814E, &status, 1);
     if (status & 0x80) {
@@ -96,5 +96,4 @@ bool touch_read(lv_indev_t *indev, lv_indev_data_t *data) {
     data->point.x = touch_last_x;
     data->point.y = touch_last_y;
     data->state = touch_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
-    return false;
 }

@@ -5,6 +5,11 @@
 
 #include <Arduino.h>
 #include <LovyanGFX.hpp>
+// The ESP32-S3 RGB parallel bus + panel classes are not pulled in by
+// <LovyanGFX.hpp>; they live in platform-specific headers that must be
+// included explicitly (this is what the bundled lgfx_user board profiles do).
+#include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
+#include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
 
 class LGFX : public lgfx::LGFX_Device {
 public:

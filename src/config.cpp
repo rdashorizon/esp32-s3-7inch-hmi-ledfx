@@ -95,9 +95,9 @@ bool ConfigStore::run_captive_portal(uint32_t timeout_seconds) {
     WebServer server(80);
     Config cfg;
 
-    server.onNotFound([]() { server.send(200, "text/html", INDEX_HTML); });
-    server.on("/", HTTP_GET, []() { server.send(200, "text/html", INDEX_HTML); });
-    server.on("/generate_204", HTTP_GET, []() { server.send(200, "text/html", INDEX_HTML); });
+    server.onNotFound([&server]() { server.send(200, "text/html", INDEX_HTML); });
+    server.on("/", HTTP_GET, [&server]() { server.send(200, "text/html", INDEX_HTML); });
+    server.on("/generate_204", HTTP_GET, [&server]() { server.send(200, "text/html", INDEX_HTML); });
 
     server.on("/save", HTTP_POST, [this, &cfg, &server]() {
         cfg.wifi_ssid = server.arg("wifi_ssid");

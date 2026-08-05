@@ -5,6 +5,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include "net.h"   // for the `net` singleton used by is_connected()
 
 struct SceneInfo {
     String id;

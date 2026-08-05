@@ -14,7 +14,7 @@
 
 Config g_config;
 
-LedFxClient g_ledfx;
+// g_ledfx is defined once in ledfx.cpp and declared extern in ledfx.h.
 
 static void attempt_login_or_revert(uint8_t retries) {
     for (uint8_t i = 0; i < retries; i++) {
