@@ -18,10 +18,21 @@ extern ConfigStore config_store;
 extern Config g_config;  // see main.cpp
 
 static lv_obj_t *s_root;
+static lv_obj_t *s_tabview;
 static lv_obj_t *s_tab_scenes;
 static lv_obj_t *s_tab_virtuals;
 static lv_obj_t *s_tab_global;
 static lv_obj_t *s_status_label;
+
+// Global-screen connection/status row + last successful data refresh.
+static lv_obj_t *s_gstatus_label = nullptr;
+static uint32_t  s_last_refresh_ms = 0;
+
+// Refresh the active data screen (scenes/virtuals) on a timer so the HUD
+// tracks LedFx state changes made elsewhere. Period in milliseconds.
+static const uint32_t AUTO_REFRESH_MS = 30000;
+
+static void update_global_status(void);
 
 // ---- Scenes screen ---------------------------------------------------------
 static lv_obj_t *s_scene_grid;
@@ -76,6 +87,8 @@ static void rebuild_scene_grid(void) {
             lv_obj_set_style_bg_color(btn, lv_color_hex(0x2266cc), 0);
         }
     }
+    s_last_refresh_ms = millis();
+    update_global_status();
     ui_show_status("Scenes refreshed");
 }
 
@@ -104,6 +117,13 @@ static void clear_all_cb(lv_event_t *e) {
     (void)e;
     g_ledfx.clear_all_effects();
     ui_show_status("Cleared all effects");
+}
+
+static void pause_all_cb(lv_event_t *e) {
+    lv_obj_t *sw = lv_event_get_target(e);
+    bool paused = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    g_ledfx.pause_all(paused);
+    ui_show_status(paused ? "Paused all virtuals" : "Resumed all virtuals");
 }
 
 static void rebuild_virt_list(void) {
@@ -148,6 +168,8 @@ static void rebuild_virt_list(void) {
         lv_obj_t *empty = lv_label_create(s_virt_list);
         lv_label_set_text(empty, "No virtuals configured yet.");
     }
+    s_last_refresh_ms = millis();
+    update_global_status();
     ui_show_status("Virtuals refreshed");
 }
 
@@ -194,6 +216,40 @@ static void flip_cb(lv_event_t *e) {
     String body;
     serializeJson(doc, body);
     g_ledfx.apply_global(body);
+}
+
+static void gradient_cb(lv_event_t *e) {
+    lv_obj_t *dd = lv_event_get_target(e);
+    char buf[32] = {0};
+    lv_dropdown_get_selected_str(dd, buf, sizeof(buf));
+    g_ledfx.set_gradient(String(buf));
+    ui_show_status((String("Gradient: ") + buf).c_str());
+}
+
+// Repaint the Global screen status row: server URL, link state, last refresh.
+static void update_global_status(void) {
+    if (!s_gstatus_label) return;
+    String s = "Server: ";
+    s += g_config.ledfx_url.length() ? g_config.ledfx_url : String("(unset)");
+    s += net.wifi_connected() ? "\nWiFi: connected" : "\nWiFi: down";
+    s += g_ledfx.is_connected() ? "  |  LedFx: authenticated"
+                                : "  |  LedFx: no token";
+    if (s_last_refresh_ms) {
+        s += "\nLast refresh: " + String((millis() - s_last_refresh_ms) / 1000) + "s ago";
+    } else {
+        s += "\nLast refresh: never";
+    }
+    lv_label_set_text(s_gstatus_label, s.c_str());
+}
+
+// Periodic refresh of whichever data screen is in front, plus a status tick.
+static void auto_refresh_cb(lv_timer_t *t) {
+    (void)t;
+    update_global_status();
+    if (!g_ledfx.is_connected()) return;
+    uint32_t idx = lv_tabview_get_tab_act(s_tabview);
+    if (idx == 0) rebuild_scene_grid();
+    else if (idx == 1) rebuild_virt_list();
 }
 
 static void build_global_screen(void) {
@@ -243,6 +299,25 @@ static void build_global_screen(void) {
     lv_label_set_text(fl, "Flip");
     lv_obj_t *fs = lv_switch_create(frow);
     lv_obj_add_event_cb(fs, flip_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Gradient preset picker
+    lv_obj_t *grow = lv_obj_create(s_tab_global);
+    lv_obj_set_size(grow, LV_PCT(100), 70);
+    lv_obj_set_flex_flow(grow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(grow, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t *gl = lv_label_create(grow);
+    lv_label_set_text(gl, "Gradient");
+    lv_obj_t *dd = lv_dropdown_create(grow);
+    lv_obj_set_width(dd, 300);
+    lv_dropdown_set_options(dd, "Rainbow\nSunset\nOcean\nForest\nFire\nFrost");
+    lv_obj_add_event_cb(dd, gradient_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Connection / status row
+    s_gstatus_label = lv_label_create(s_tab_global);
+    lv_obj_set_width(s_gstatus_label, LV_PCT(100));
+    lv_obj_set_style_text_color(s_gstatus_label, lv_color_hex(0xaaaaaa), 0);
+    update_global_status();
 }
 
 // ---- Tab switching ---------------------------------------------------------
@@ -251,6 +326,7 @@ static void tab_changed_cb(lv_event_t *e) {
     uint32_t idx = lv_tabview_get_tab_act(btns);
     if (idx == 0) rebuild_scene_grid();
     if (idx == 1) rebuild_virt_list();
+    if (idx == 2) update_global_status();
 }
 
 // ---- Init ------------------------------------------------------------------
@@ -258,11 +334,11 @@ void ui_init(void) {
     s_root = lv_obj_create(NULL);
     lv_scr_load(s_root);
 
-    lv_obj_t *tv = lv_tabview_create(s_root, LV_DIR_TOP, 40);
-    s_tab_scenes   = lv_tabview_add_tab(tv, "Scenes");
-    s_tab_virtuals = lv_tabview_add_tab(tv, "Virtuals");
-    s_tab_global   = lv_tabview_add_tab(tv, "Global");
-    lv_obj_add_event_cb(tv, tab_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_tabview = lv_tabview_create(s_root, LV_DIR_TOP, 40);
+    s_tab_scenes   = lv_tabview_add_tab(s_tabview, "Scenes");
+    s_tab_virtuals = lv_tabview_add_tab(s_tabview, "Virtuals");
+    s_tab_global   = lv_tabview_add_tab(s_tabview, "Global");
+    lv_obj_add_event_cb(s_tabview, tab_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     // Status bar at the bottom
     s_status_label = lv_label_create(lv_scr_act());
@@ -291,8 +367,23 @@ void ui_init(void) {
     lv_obj_center(cbl);
     lv_obj_add_event_cb(clear_btn, clear_all_cb, LV_EVENT_CLICKED, NULL);
 
+    // Pause-all toggle on virtuals screen (bottom-left toolbar)
+    lv_obj_t *pause_wrap = lv_obj_create(s_tab_virtuals);
+    lv_obj_set_size(pause_wrap, 200, 50);
+    lv_obj_align(pause_wrap, LV_ALIGN_BOTTOM_LEFT, 16, -16);
+    lv_obj_set_flex_flow(pause_wrap, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(pause_wrap, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t *pl = lv_label_create(pause_wrap);
+    lv_label_set_text(pl, "Pause all");
+    lv_obj_t *psw = lv_switch_create(pause_wrap);
+    lv_obj_add_event_cb(psw, pause_all_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
     build_global_screen();
     rebuild_scene_grid();
+
+    // Keep the front data screen (and the status row) in sync with LedFx.
+    lv_timer_create(auto_refresh_cb, AUTO_REFRESH_MS, NULL);
 }
 
 void ui_show_status(const char *msg, bool is_error) {

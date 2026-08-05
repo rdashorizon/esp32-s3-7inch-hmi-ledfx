@@ -42,6 +42,12 @@ public:
     int clear_all_effects();
     int apply_global(const String &json);
 
+    // Pause / resume every virtual's output (Virtuals toolbar toggle).
+    int pause_all(bool paused);
+
+    // Apply one of the built-in LedFx gradient presets (Global screen).
+    int set_gradient(const String &name);
+
     bool is_connected() const { return net.has_token(); }
 
 private:

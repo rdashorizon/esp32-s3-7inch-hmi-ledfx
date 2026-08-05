@@ -132,3 +132,22 @@ int LedFxClient::apply_global(const String &json) {
     String resp;
     return net.put_json(_url("/api/effects"), json, resp);
 }
+
+int LedFxClient::pause_all(bool paused) {
+    StaticJsonDocument<64> doc;
+    doc["paused"] = paused;
+    String body;
+    serializeJson(doc, body);
+    String resp;
+    return net.put_json(_url("/api/virtuals"), body, resp);
+}
+
+int LedFxClient::set_gradient(const String &name) {
+    StaticJsonDocument<128> doc;
+    doc["action"] = "apply_global";
+    doc["gradient"] = name;
+    String body;
+    serializeJson(doc, body);
+    String resp;
+    return net.put_json(_url("/api/effects"), body, resp);
+}
