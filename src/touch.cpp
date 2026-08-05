@@ -73,25 +73,31 @@ void touch_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
     (void)drv;
     uint8_t status = 0;
     gt911_read(0x814E, &status, 1);
+    // Bit 7 (0x80) = "buffer ready": the GT911 has a fresh frame for us. It
+    // raises this on both touch and release (release reports 0 points), and
+    // will not report the next frame until we acknowledge this one by writing
+    // 0 back to the status register. Clearing it only on touch (points > 0)
+    // left the flag set forever after the first release, wedging the input as
+    // permanently pressed.
     if (status & 0x80) {
         uint8_t points = status & 0x0F;
         if (points > 0) {
             uint8_t buf[8] = {0};
             gt911_read(0x8150, buf, 8);
-            uint16_t x = ((uint16_t)buf[1] << 8) | buf[0];
-            uint16_t y = ((uint16_t)buf[3] << 8) | buf[2];
+            // Point 1 registers: 0x8150 x_low, 0x8151 x_high, 0x8152 y_low,
+            // 0x8153 y_high (the track id lives at 0x814F, which we skip).
             // GT911 returns 800x480; LVGL panel is also 800x480.
-            touch_last_x = x;
-            touch_last_y = y;
+            touch_last_x = ((uint16_t)buf[1] << 8) | buf[0];
+            touch_last_y = ((uint16_t)buf[3] << 8) | buf[2];
             touch_pressed = true;
-
-            // Clear the ready flag so we don't re-read the same touch.
-            uint8_t clear = 0;
-            gt911_write(0x814E, &clear, 1);
+        } else {
+            touch_pressed = false;  // finger lifted
         }
-    } else {
-        touch_pressed = false;
+        // Always acknowledge the frame so the GT911 reports the next one.
+        uint8_t clear = 0;
+        gt911_write(0x814E, &clear, 1);
     }
+    // No new frame: keep the previous pressed state / coordinates.
 
     data->point.x = touch_last_x;
     data->point.y = touch_last_y;

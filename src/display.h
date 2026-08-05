@@ -15,6 +15,9 @@ class LGFX : public lgfx::LGFX_Device {
 public:
     lgfx::Bus_RGB _bus_instance;
     lgfx::Panel_RGB _panel_instance;
+    // Backlight on GPIO2. Without a registered light, setBrightness() is a
+    // no-op and the panel stays dark even though pixels are being driven.
+    lgfx::Light_PWM _light_instance;
 
     LGFX(void);
 };
