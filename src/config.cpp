@@ -8,6 +8,7 @@
 // automatically on most devices.
 // ---------------------------------------------------------------------------
 #include "config.h"
+#include "lvgl_port.h"   // keep the screen alive while the portal blocks
 #include <WiFi.h>
 #include <WebServer.h>
 #include <DNSServer.h>
@@ -117,7 +118,8 @@ bool ConfigStore::run_captive_portal(uint32_t timeout_seconds) {
     while (true) {
         dns.processNextRequest();
         server.handleClient();
-        delay(10);
+        lvgl_tick();  // service the display so the setup screen stays responsive
+        delay(5);
         if (timeout_seconds > 0 && (millis() - start) > timeout_seconds * 1000UL) {
             return false;
         }

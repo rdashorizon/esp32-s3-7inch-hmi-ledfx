@@ -28,6 +28,10 @@ bool Net::connect_wifi(const String &ssid, const String &pass, uint32_t timeout_
 }
 
 bool Net::login(const String &base_url, const String &user, const String &pass) {
+    // Cache credentials so request() can re-auth on token expiry.
+    _base = base_url;
+    _user = user;
+    _pass = pass;
     if (WiFi.status() != WL_CONNECTED) return false;
     HTTPClient http;
     String url = base_url + "/api/auth/login";
@@ -62,35 +66,45 @@ bool Net::login(const String &base_url, const String &user, const String &pass) 
     return _token.length() > 0;
 }
 
-static int do_request(const String &method, const String &url, const String &body,
-                      const String &token, String &resp) {
-    HTTPClient http;
-    http.begin(url);
-    http.setConnectTimeout(HTTP_TIMEOUT_MS);
-    http.setTimeout(HTTP_TIMEOUT_MS);
-    http.addHeader("Authorization", "Bearer " + token);
-    http.addHeader("Content-Type", "application/json");
-    int code;
-    if (method == "GET") {
-        code = http.GET();
-    } else if (method == "POST") {
-        code = http.POST(body);
-    } else {
-        code = http.PUT(body);
+int Net::request(const char *method, const String &url, const String &body, String &resp) {
+    // Up to two attempts: if the first fails with 401/403 the token has likely
+    // expired, so re-login once with the cached credentials and retry.
+    for (int attempt = 0; attempt < 2; attempt++) {
+        HTTPClient http;
+        http.begin(url);
+        http.setConnectTimeout(HTTP_TIMEOUT_MS);
+        http.setTimeout(HTTP_TIMEOUT_MS);
+        if (_token.length()) http.addHeader("Authorization", "Bearer " + _token);
+        http.addHeader("Content-Type", "application/json");
+        int code;
+        if (strcmp(method, "GET") == 0) {
+            code = http.GET();
+        } else if (strcmp(method, "POST") == 0) {
+            code = http.POST(body);
+        } else {
+            code = http.PUT(body);
+        }
+        resp = http.getString();
+        http.end();
+
+        if ((code == 401 || code == 403) && attempt == 0 && _base.length()) {
+            _token = "";
+            if (!login(_base, _user, _pass)) return code;  // re-auth failed
+            continue;                                        // retry once
+        }
+        return code;
     }
-    resp = http.getString();
-    http.end();
-    return code;
+    return 0;
 }
 
 int Net::get(const String &url, String &body) {
-    return do_request("GET", url, "", _token, body);
+    return request("GET", url, "", body);
 }
 
 int Net::post_json(const String &url, const String &json, String &body) {
-    return do_request("POST", url, json, _token, body);
+    return request("POST", url, json, body);
 }
 
 int Net::put_json(const String &url, const String &json, String &body) {
-    return do_request("PUT", url, json, _token, body);
+    return request("PUT", url, json, body);
 }

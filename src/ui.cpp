@@ -9,12 +9,11 @@
 // A bottom status bar shows WiFi state, LedFx server, last refresh time.
 // ---------------------------------------------------------------------------
 #include "ui.h"
-#include "ledfx.h"
+#include "ledfx.h"     // SceneInfo / VirtualInfo
+#include "worker.h"    // background network worker (submit/poll)
 #include "config.h"
 #include <ArduinoJson.h>
 
-extern Net net;
-extern ConfigStore config_store;
 extern Config g_config;  // see main.cpp
 
 static lv_obj_t *s_root;
@@ -27,12 +26,19 @@ static lv_obj_t *s_status_label;
 // Global-screen connection/status row + last successful data refresh.
 static lv_obj_t *s_gstatus_label = nullptr;
 static uint32_t  s_last_refresh_ms = 0;
+// Link state, mirrored from the worker's RES_CONN messages. The UI never reads
+// the network client directly (that would race the worker thread).
+static bool      s_link_ok = false;
 
 // Refresh the active data screen (scenes/virtuals) on a timer so the HUD
 // tracks LedFx state changes made elsewhere. Period in milliseconds.
 static const uint32_t AUTO_REFRESH_MS = 30000;
+// How often the UI drains network results from the worker and repaints.
+static const uint32_t RESULT_PUMP_MS = 80;
 
 static void update_global_status(void);
+static void request_scenes(void);
+static void request_virtuals(void);
 
 // ---- Scenes screen ---------------------------------------------------------
 static lv_obj_t *s_scene_grid;
@@ -43,31 +49,26 @@ static void scene_btn_clicked(lv_event_t *e) {
     lv_obj_t *btn = lv_event_get_target(e);
     int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
     if (idx < 0 || idx >= s_scene_count) return;
-    g_ledfx.activate_scene(s_scenes[idx].id);
-    ui_show_status(("Activated: " + s_scenes[idx].name).c_str());
-    ui_refresh_scenes();  // refresh active state
+    worker_submit(req_id(REQ_ACTIVATE_SCENE, s_scenes[idx].id));
+    ui_show_status(("Activating: " + s_scenes[idx].name).c_str());
 }
 
 static void scene_btn_long(lv_event_t *e) {
     lv_obj_t *btn = lv_event_get_target(e);
     int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
     if (idx < 0 || idx >= s_scene_count) return;
-    g_ledfx.deactivate_scene(s_scenes[idx].id);
-    ui_show_status(("Deactivated: " + s_scenes[idx].name).c_str());
-    ui_refresh_scenes();
+    worker_submit(req_id(REQ_DEACTIVATE_SCENE, s_scenes[idx].id));
+    ui_show_status(("Deactivating: " + s_scenes[idx].name).c_str());
 }
 
-static void rebuild_scene_grid(void) {
-    lv_obj_clean(s_scene_grid);
-    delete[] s_scenes;  // runs String destructors; new[] in fetch_scenes
-    s_scenes = nullptr;
-    s_scene_count = 0;
+// Ask the worker for a fresh scene list; render_scene_grid() paints the reply.
+static void request_scenes(void) {
+    if (worker_submit(req_simple(REQ_FETCH_SCENES))) ui_show_status("Refreshing scenes…");
+}
 
-    int code = g_ledfx.fetch_scenes(s_scenes, s_scene_count);
-    if (code != 200) {
-        ui_show_status("Failed to fetch scenes", true);
-        return;
-    }
+// Paint the grid from the already-populated s_scenes[] (owned by the pump).
+static void render_scene_grid(void) {
+    lv_obj_clean(s_scene_grid);
 
     for (int i = 0; i < s_scene_count; i++) {
         const int col = i % 4;
@@ -102,41 +103,36 @@ static void virt_toggle(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_obj_get_user_data(sw);
     if (idx < 0 || idx >= s_virt_count) return;
     bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    g_ledfx.set_virtual_active(s_virt[idx].id, on);
+    worker_submit(req_id(REQ_SET_VIRTUAL_ACTIVE, s_virt[idx].id, on));
 }
 
 static void virt_randomize(lv_event_t *e) {
     lv_obj_t *btn = lv_event_get_target(e);
     int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
     if (idx < 0 || idx >= s_virt_count) return;
-    g_ledfx.randomize_virtual(s_virt[idx].id);
-    ui_show_status(("Randomized: " + s_virt[idx].name).c_str());
+    worker_submit(req_id(REQ_RANDOMIZE_VIRTUAL, s_virt[idx].id));
+    ui_show_status(("Randomizing: " + s_virt[idx].name).c_str());
 }
 
 static void clear_all_cb(lv_event_t *e) {
     (void)e;
-    g_ledfx.clear_all_effects();
-    ui_show_status("Cleared all effects");
+    worker_submit(req_simple(REQ_CLEAR_ALL));
 }
 
 static void pause_all_cb(lv_event_t *e) {
     lv_obj_t *sw = lv_event_get_target(e);
     bool paused = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    g_ledfx.pause_all(paused);
-    ui_show_status(paused ? "Paused all virtuals" : "Resumed all virtuals");
+    worker_submit(req_id(REQ_PAUSE_ALL, String(), paused));
 }
 
-static void rebuild_virt_list(void) {
-    lv_obj_clean(s_virt_list);
-    delete[] s_virt;  // runs String destructors; new[] in fetch_virtuals
-    s_virt = nullptr;
-    s_virt_count = 0;
+// Ask the worker for a fresh virtual list; render_virt_list() paints the reply.
+static void request_virtuals(void) {
+    if (worker_submit(req_simple(REQ_FETCH_VIRTUALS))) ui_show_status("Refreshing virtuals…");
+}
 
-    int code = g_ledfx.fetch_virtuals(s_virt, s_virt_count);
-    if (code != 200) {
-        ui_show_status("Failed to fetch virtuals", true);
-        return;
-    }
+// Paint the list from the already-populated s_virt[] (owned by the pump).
+static void render_virt_list(void) {
+    lv_obj_clean(s_virt_list);
 
     for (int i = 0; i < s_virt_count; i++) {
         lv_obj_t *row = lv_obj_create(s_virt_list);
@@ -183,57 +179,55 @@ static void bright_slider_cb(lv_event_t *e) {
     lv_label_set_text_fmt(s_bright_value, "%d%%", v);
 }
 
+// Build an apply_global body and hand it to the worker.
+static void submit_global(const JsonDocument &doc) {
+    String body;
+    serializeJson(doc, body);
+    worker_submit(req_payload(REQ_APPLY_GLOBAL, body));
+}
+
 static void bright_apply_cb(lv_event_t *e) {
     (void)e;
     int v = lv_slider_get_value(s_bright_slider);
-    float f = v / 100.0f;
     StaticJsonDocument<128> doc;
     doc["action"] = "apply_global";
-    doc["brightness"] = f;
-    String body;
-    serializeJson(doc, body);
-    g_ledfx.apply_global(body);
-    ui_show_status("Brightness applied");
+    doc["brightness"] = v / 100.0f;
+    submit_global(doc);
+    ui_show_status("Applying brightness…");
 }
 
 static void mirror_cb(lv_event_t *e) {
     lv_obj_t *sw = lv_event_get_target(e);
-    bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
     StaticJsonDocument<128> doc;
     doc["action"] = "apply_global";
-    doc["mirror"] = on;
-    String body;
-    serializeJson(doc, body);
-    g_ledfx.apply_global(body);
+    doc["mirror"] = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    submit_global(doc);
 }
 
 static void flip_cb(lv_event_t *e) {
     lv_obj_t *sw = lv_event_get_target(e);
-    bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
     StaticJsonDocument<128> doc;
     doc["action"] = "apply_global";
-    doc["flip"] = on;
-    String body;
-    serializeJson(doc, body);
-    g_ledfx.apply_global(body);
+    doc["flip"] = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    submit_global(doc);
 }
 
 static void gradient_cb(lv_event_t *e) {
     lv_obj_t *dd = lv_event_get_target(e);
     char buf[32] = {0};
     lv_dropdown_get_selected_str(dd, buf, sizeof(buf));
-    g_ledfx.set_gradient(String(buf));
+    worker_submit(req_payload(REQ_SET_GRADIENT, String(buf)));
     ui_show_status((String("Gradient: ") + buf).c_str());
 }
 
 // Repaint the Global screen status row: server URL, link state, last refresh.
+// Link state comes from s_link_ok (set by the worker) — never poll the network
+// client here, that would race the worker thread.
 static void update_global_status(void) {
     if (!s_gstatus_label) return;
     String s = "Server: ";
     s += g_config.ledfx_url.length() ? g_config.ledfx_url : String("(unset)");
-    s += net.wifi_connected() ? "\nWiFi: connected" : "\nWiFi: down";
-    s += g_ledfx.is_connected() ? "  |  LedFx: authenticated"
-                                : "  |  LedFx: no token";
+    s += s_link_ok ? "\nLedFx: connected" : "\nLedFx: connecting…";
     if (s_last_refresh_ms) {
         s += "\nLast refresh: " + String((millis() - s_last_refresh_ms) / 1000) + "s ago";
     } else {
@@ -242,14 +236,51 @@ static void update_global_status(void) {
     lv_label_set_text(s_gstatus_label, s.c_str());
 }
 
-// Periodic refresh of whichever data screen is in front, plus a status tick.
+// Enqueue a refresh for whichever data screen is currently in front.
+static void request_active_screen(void) {
+    uint32_t idx = lv_tabview_get_tab_act(s_tabview);
+    if (idx == 0) request_scenes();
+    else if (idx == 1) request_virtuals();
+}
+
+// Periodic refresh of the front data screen, plus a status tick.
 static void auto_refresh_cb(lv_timer_t *t) {
     (void)t;
     update_global_status();
-    if (!g_ledfx.is_connected()) return;
-    uint32_t idx = lv_tabview_get_tab_act(s_tabview);
-    if (idx == 0) rebuild_scene_grid();
-    else if (idx == 1) rebuild_virt_list();
+    if (s_link_ok) request_active_screen();
+}
+
+// Drain the worker's result queue on the LVGL thread and repaint. This is the
+// only place scene/virtual data or link state is adopted into the UI.
+static void result_pump_cb(lv_timer_t *t) {
+    (void)t;
+    Result r;
+    while (worker_poll(r)) {
+        switch (r.type) {
+            case RES_SCENES:
+                delete[] s_scenes;  // release the previous list
+                s_scenes = static_cast<SceneInfo *>(r.data);
+                s_scene_count = r.count;
+                if (r.status == 200) render_scene_grid();
+                else ui_show_status(r.msg[0] ? r.msg : "Failed to fetch scenes", true);
+                break;
+            case RES_VIRTUALS:
+                delete[] s_virt;
+                s_virt = static_cast<VirtualInfo *>(r.data);
+                s_virt_count = r.count;
+                if (r.status == 200) render_virt_list();
+                else ui_show_status(r.msg[0] ? r.msg : "Failed to fetch virtuals", true);
+                break;
+            case RES_ACTION:
+                ui_show_status(r.msg, r.status != 200);
+                break;
+            case RES_CONN:
+                s_link_ok = r.connected;
+                ui_show_status(r.msg, !r.connected);
+                update_global_status();
+                break;
+        }
+    }
 }
 
 static void build_global_screen(void) {
@@ -324,8 +355,8 @@ static void build_global_screen(void) {
 static void tab_changed_cb(lv_event_t *e) {
     lv_obj_t *btns = lv_event_get_target(e);
     uint32_t idx = lv_tabview_get_tab_act(btns);
-    if (idx == 0) rebuild_scene_grid();
-    if (idx == 1) rebuild_virt_list();
+    if (idx == 0) request_scenes();
+    if (idx == 1) request_virtuals();
     if (idx == 2) update_global_status();
 }
 
@@ -380,8 +411,13 @@ void ui_init(void) {
     lv_obj_add_event_cb(psw, pause_all_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     build_global_screen();
-    rebuild_scene_grid();
 
+    ui_show_status("Connecting to LedFx…");
+
+    // Drain worker results (and repaint) on the LVGL thread.
+    lv_timer_create(result_pump_cb, RESULT_PUMP_MS, NULL);
+    // Kick off the first scene fetch (the worker connects on demand).
+    request_scenes();
     // Keep the front data screen (and the status row) in sync with LedFx.
     lv_timer_create(auto_refresh_cb, AUTO_REFRESH_MS, NULL);
 }
@@ -393,5 +429,5 @@ void ui_show_status(const char *msg, bool is_error) {
                                 is_error ? lv_color_hex(0xff4444) : lv_color_hex(0xcccccc), 0);
 }
 
-void ui_refresh_scenes(void)   { rebuild_scene_grid(); }
-void ui_refresh_virtuals(void) { rebuild_virt_list(); }
+void ui_refresh_scenes(void)   { request_scenes(); }
+void ui_refresh_virtuals(void) { request_virtuals(); }

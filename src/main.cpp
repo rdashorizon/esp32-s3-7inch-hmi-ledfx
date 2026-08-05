@@ -11,29 +11,11 @@
 #include "net.h"
 #include "ledfx.h"
 #include "ui.h"
+#include "worker.h"
 
 Config g_config;
 
 // g_ledfx is defined once in ledfx.cpp and declared extern in ledfx.h.
-
-static void attempt_login_or_revert(uint8_t retries) {
-    for (uint8_t i = 0; i < retries; i++) {
-        if (!net.connect_wifi(g_config.wifi_ssid, g_config.wifi_pass)) {
-            ui_show_status("WiFi failed, retrying...", true);
-            delay(2000);
-            continue;
-        }
-        if (g_ledfx.connect(g_config.ledfx_user, g_config.ledfx_pass)) {
-            ui_show_status("Connected to LedFx");
-            return;
-        }
-        ui_show_status("LedFx login failed, retrying...", true);
-        delay(2000);
-    }
-    // Fall back to setup mode.
-    config_store.clear();
-    (void)config_store.run_captive_portal();
-}
 
 void setup(void) {
     Serial.begin(115200);
@@ -44,17 +26,21 @@ void setup(void) {
     lvgl_init();
 
     if (!config_store.load(g_config)) {
-        // No config yet — straight into the setup AP.
+        // No config yet — straight into the setup AP. The portal now services
+        // LVGL so the screen stays live while the user fills in the form.
         ui_init();
         ui_show_status("Configure via WiFi: ledfx-hmi-setup");
         (void)config_store.run_captive_portal();
     }
 
-    // We have config. Init the UI, then try to connect.
-    ui_init();
-
+    // We have config. Bring up the network worker first (so the very first UI
+    // fetch has a queue to land in), then the UI. All connecting/login now
+    // happens on the worker's core so the render loop never blocks on it.
     g_ledfx.set_base_url(g_config.ledfx_url);
-    attempt_login_or_revert(3);
+    worker_init();
+    worker_submit(req_simple(REQ_CONNECT));
+
+    ui_init();  // enqueues the initial scenes fetch + starts the result pump
 }
 
 void loop(void) {
