@@ -59,7 +59,7 @@ static void scene_btn_long(lv_event_t *e) {
 
 static void rebuild_scene_grid(void) {
     lv_obj_clean(s_scene_grid);
-    if (s_scenes) free(s_scenes);
+    delete[] s_scenes;  // runs String destructors; new[] in fetch_scenes
     s_scenes = nullptr;
     s_scene_count = 0;
 
@@ -128,7 +128,7 @@ static void pause_all_cb(lv_event_t *e) {
 
 static void rebuild_virt_list(void) {
     lv_obj_clean(s_virt_list);
-    if (s_virt) free(s_virt);
+    delete[] s_virt;  // runs String destructors; new[] in fetch_virtuals
     s_virt = nullptr;
     s_virt_count = 0;
 

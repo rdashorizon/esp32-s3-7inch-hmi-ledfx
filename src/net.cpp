@@ -12,6 +12,10 @@
 
 Net net;
 
+// Bound every HTTP call so a dead or slow LedFx server can never stall the
+// loop indefinitely (TCP connect + per-read timeout, in milliseconds).
+static const uint16_t HTTP_TIMEOUT_MS = 6000;
+
 bool Net::connect_wifi(const String &ssid, const String &pass, uint32_t timeout_ms) {
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid.c_str(), pass.c_str());
@@ -28,6 +32,8 @@ bool Net::login(const String &base_url, const String &user, const String &pass) 
     HTTPClient http;
     String url = base_url + "/api/auth/login";
     http.begin(url);
+    http.setConnectTimeout(HTTP_TIMEOUT_MS);
+    http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
 
     StaticJsonDocument<256> doc;
@@ -60,6 +66,8 @@ static int do_request(const String &method, const String &url, const String &bod
                       const String &token, String &resp) {
     HTTPClient http;
     http.begin(url);
+    http.setConnectTimeout(HTTP_TIMEOUT_MS);
+    http.setTimeout(HTTP_TIMEOUT_MS);
     http.addHeader("Authorization", "Bearer " + token);
     http.addHeader("Content-Type", "application/json");
     int code;

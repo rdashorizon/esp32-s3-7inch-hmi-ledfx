@@ -1,15 +1,30 @@
 // ---------------------------------------------------------------------------
 // ledfx.cpp — LedFx REST client
 //
-// All public methods allocate the result arrays on the heap. The caller
-// must free() them. Sizes are deliberately small (cap at 32 scenes / 32
-// virtuals) — the typical LedFx install has at most a handful of either.
+// fetch_scenes/fetch_virtuals allocate the result arrays with new[]. The
+// caller owns them and must release them with delete[] (they hold String
+// members, so free() would leak). Counts are capped at 32 scenes / 32
+// virtuals — the typical LedFx install has at most a handful of either.
 // ---------------------------------------------------------------------------
 #include "ledfx.h"
 #include "net.h"
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h>
 
 LedFxClient g_ledfx;
+
+// The scenes/virtuals responses can be large. Parsing them into a
+// StaticJsonDocument placed these multi-kilobyte buffers on the loop task's
+// ~8 KB stack (the virtuals doc alone was 16 KB — a guaranteed overflow). Back
+// the documents with PSRAM instead, so nothing large lands on the stack.
+struct SpiRamAllocator {
+    void *allocate(size_t size)   { return heap_caps_malloc(size, MALLOC_CAP_SPIRAM); }
+    void  deallocate(void *ptr)   { heap_caps_free(ptr); }
+    void *reallocate(void *ptr, size_t new_size) {
+        return heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM);
+    }
+};
+using SpiRamJsonDocument = BasicJsonDocument<SpiRamAllocator>;
 
 bool LedFxClient::connect(const String &user, const String &pass) {
     return net.login(_base, user, pass);
@@ -22,7 +37,7 @@ int LedFxClient::fetch_scenes(SceneInfo *&out, int &count) {
     int code = net.get(_url("/api/scenes"), body);
     if (code != 200) return code;
 
-    StaticJsonDocument<8192> doc;
+    SpiRamJsonDocument doc(8192);
     if (deserializeJson(doc, body) != DeserializationError::Ok) return 500;
 
     JsonObject scenes = doc["scenes"];
@@ -33,7 +48,10 @@ int LedFxClient::fetch_scenes(SceneInfo *&out, int &count) {
     if (count == 0) return 200;
     if (count > 32) count = 32;
 
-    out = (SceneInfo *)calloc(count, sizeof(SceneInfo));
+    // new[] so the String members are constructed (and destructed on delete[]);
+    // the previous calloc()/free() pair leaked every String on each refresh.
+    out = new (std::nothrow) SceneInfo[count];
+    if (!out) { count = 0; return 500; }
     int i = 0;
     for (JsonPair kv : scenes) {
         if (i >= count) break;
@@ -52,7 +70,7 @@ int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count) {
     int code = net.get(_url("/api/virtuals"), body);
     if (code != 200) return code;
 
-    StaticJsonDocument<16384> doc;
+    SpiRamJsonDocument doc(16384);
     if (deserializeJson(doc, body) != DeserializationError::Ok) return 500;
 
     JsonObject virtuals = doc["virtuals"];
@@ -63,7 +81,8 @@ int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count) {
     if (count == 0) return 200;
     if (count > 32) count = 32;
 
-    out = (VirtualInfo *)calloc(count, sizeof(VirtualInfo));
+    out = new (std::nothrow) VirtualInfo[count];
+    if (!out) { count = 0; return 500; }
     int i = 0;
     for (JsonPair kv : virtuals) {
         if (i >= count) break;
