@@ -44,6 +44,13 @@ public:
     LedColor load_last_color();
     void     save_last_color(LedColor c);
 
+    // Last color picked in the per-virtual color modal (Tier 2.2). Single
+    // global value (not per-virtual — see plan Risks for why). Used as the
+    // modal's seed RGB so the picker opens at the user's last choice instead
+    // of re-deriving from the virtual's gradient.
+    LedColor load_last_virt_color();
+    void     save_last_virt_color(LedColor c);
+
     // Captive portal DNS+webserver. Blocks until the user submits a config
     // or until timeout_seconds elapses. Returns true if a config was saved.
     bool run_captive_portal(uint32_t timeout_seconds = 0);

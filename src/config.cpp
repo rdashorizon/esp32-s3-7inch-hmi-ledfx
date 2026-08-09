@@ -24,6 +24,7 @@ static const char *K_AP_TOUT = "ap_timeout";
 static const char *K_SCRBRI = "scr_bright";
 static const char *K_LASTTAB = "last_tab";
 static const char *K_LASTCLR = "last_color";
+static const char *K_LASTVCLR = "last_vcolor";
 
 static const byte DNS_PORT = 53;
 static const IPAddress AP_IP(4, 3, 2, 1);
@@ -173,6 +174,26 @@ void ConfigStore::save_last_color(LedColor c) {
     prefs.begin(NVS_NS, false);
     uint8_t buf[3] = { c.r, c.g, c.b };
     prefs.putBytes(K_LASTCLR, buf, sizeof(buf));
+    prefs.end();
+}
+
+LedColor ConfigStore::load_last_virt_color() {
+    // Same warm-white default as the global Color picker's last_color so a
+    // brand-new device behaves the same way whether the user opens the global
+    // tab or the per-virtual modal first.
+    uint8_t buf[3] = {255, 200, 128};
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    prefs.getBytes(K_LASTVCLR, buf, sizeof(buf));
+    prefs.end();
+    return { buf[0], buf[1], buf[2] };
+}
+
+void ConfigStore::save_last_virt_color(LedColor c) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    uint8_t buf[3] = { c.r, c.g, c.b };
+    prefs.putBytes(K_LASTVCLR, buf, sizeof(buf));
     prefs.end();
 }
 

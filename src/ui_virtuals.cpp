@@ -8,6 +8,7 @@
 #include "ui.h"         // ui_show_status, ui_submit (for the overlay)
 #include "worker.h"     // worker_submit, req_*, REQ_*
 #include "ui_global.h"  // ui_global_mark_refreshed, ui_global_apply_state_with_pause
+#include "config.h"     // LedColor, load/save_last_virt_color (Tier 2.2)
 #include <Arduino.h>    // millis
 
 // ---- Module state (LVGL-thread-only) --------------------------------------
@@ -305,6 +306,10 @@ static void modal_apply_cb(lv_event_t *e) {
     // after FLASH_TIMEOUT_MS — checked at render time.
     s_last_set_idx = s_color_modal_idx;
     s_last_set_ms = millis();
+    // Persist the picked color so the modal reopens at this RGB next time
+    // (Tier 2.2). Single global value — see plan Risks for why we don't
+    // track per-virtual history.
+    config_store.save_last_virt_color({s_modal_r, s_modal_g, s_modal_b});
     char hex[8];
     snprintf(hex, sizeof(hex), "#%02x%02x%02x", s_modal_r, s_modal_g, s_modal_b);
     ui_submit(req_set_virtual_color(v.id, v.effect_type, hex));
@@ -370,9 +375,20 @@ static void open_virtual_color_modal(int idx) {
     s_color_modal_idx = idx;
     const VirtualInfo &v = s_virt[idx];
 
-    // Seed the modal's RGB from the virtual's current gradient color
-    // (same heuristic the row swatch uses). Falls back to warm white.
-    if (!v.gradient.isEmpty()) {
+    // Seed the modal's RGB. Preference order (Tier 2.2):
+    //   1. The user's last picked color (across reboots), if it differs
+    //      from the warm-white default — that means they have actually
+    //      picked something via this modal at least once.
+    //   2. The virtual's current gradient color (same heuristic the row
+    //      swatch uses).
+    //   3. Warm white (255, 200, 128) as a final fallback.
+    LedColor saved = config_store.load_last_virt_color();
+    bool saved_is_default = (saved.r == 255 && saved.g == 200 && saved.b == 128);
+    if (!saved_is_default) {
+        s_modal_r = saved.r;
+        s_modal_g = saved.g;
+        s_modal_b = saved.b;
+    } else if (!v.gradient.isEmpty()) {
         uint32_t hex24 = gradient_to_color(v.gradient);
         s_modal_r = (hex24 >> 16) & 0xff;
         s_modal_g = (hex24 >>  8) & 0xff;
