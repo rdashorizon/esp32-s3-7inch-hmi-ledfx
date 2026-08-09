@@ -23,6 +23,17 @@ static lv_obj_t *s_pause_sw = nullptr;
 static VirtualInfo *s_virt = nullptr;  // owned by this module; delete[] on next fetch
 static int s_virt_count = 0;
 
+// ---- Per-virtual color modal state (Tier 1) --------------------------------
+// All LVGL-thread-only. The modal is a top-layer overlay anchored to the
+// Virtuals tab; it builds fresh on each open and destroys on close.
+static lv_obj_t *s_color_modal = nullptr;     // top-layer modal root
+static int       s_color_modal_idx = -1;     // which row the modal is editing
+static uint8_t   s_modal_r = 255, s_modal_g = 200, s_modal_b = 128;
+static lv_obj_t *s_modal_wheel;
+static lv_obj_t *s_modal_slider_r, *s_modal_slider_g, *s_modal_slider_b;
+static lv_obj_t *s_modal_label_r, *s_modal_label_g, *s_modal_label_b;
+static lv_obj_t *s_modal_swatch;
+
 // ---- Helpers ---------------------------------------------------------------
 static void obj_show(lv_obj_t *o, bool show) {
     if (!o) return;
@@ -228,10 +239,213 @@ void ui_virtuals_request_refresh(void) {
     }
 }
 
-// Stub — Task 1.4 replaces this with the full modal build (colorwheel +
-// RGB sliders + swatch + Apply/Black/Cancel). Kept as a stub here so the
-// click handler in this task compiles and runs without doing anything yet.
-static void open_virtual_color_modal(int idx) { (void)idx; }
+// ---- Per-virtual color modal (Tier 1) --------------------------------------
+// Reuses the LVGL colorwheel + RGB-slider pattern from ui_color.cpp but as
+// a top-layer modal anchored to the Virtuals tab. Apply sends
+// REQ_SET_VIRTUAL_COLOR (PUT /api/virtuals/{id}/effects {type, config:
+// {background_color}}). Cancel closes without sending.
+
+static void modal_close(void) {
+    if (s_color_modal) {
+        lv_obj_del(s_color_modal);
+        s_color_modal = nullptr;
+    }
+    s_color_modal_idx = -1;
+}
+
+static void modal_apply_cb(lv_event_t *e) {
+    (void)e;
+    if (s_color_modal_idx < 0 || s_color_modal_idx >= s_virt_count) return;
+    const VirtualInfo &v = s_virt[s_color_modal_idx];
+    // If the virtual has no active effect, LedFx will reject the PUT — bail
+    // out with a status message rather than sending a request that's
+    // guaranteed to fail.
+    if (v.effect_type.isEmpty()) {
+        ui_show_status("Virtual has no active effect — cannot color", true);
+        modal_close();
+        return;
+    }
+    char hex[8];
+    snprintf(hex, sizeof(hex), "#%02x%02x%02x", s_modal_r, s_modal_g, s_modal_b);
+    ui_submit(req_set_virtual_color(v.id, v.effect_type, hex));
+    modal_close();
+}
+
+static void modal_black_cb(lv_event_t *e) {
+    (void)e;
+    s_modal_r = s_modal_g = s_modal_b = 0;
+    if (s_modal_slider_r) lv_slider_set_value(s_modal_slider_r, 0, LV_ANIM_OFF);
+    if (s_modal_slider_g) lv_slider_set_value(s_modal_slider_g, 0, LV_ANIM_OFF);
+    if (s_modal_slider_b) lv_slider_set_value(s_modal_slider_b, 0, LV_ANIM_OFF);
+    if (s_modal_swatch) {
+        lv_obj_set_style_bg_color(s_modal_swatch, lv_color_make(0, 0, 0), 0);
+    }
+    if (s_modal_label_r) lv_label_set_text_fmt(s_modal_label_r, "R   0");
+    if (s_modal_label_g) lv_label_set_text_fmt(s_modal_label_g, "G   0");
+    if (s_modal_label_b) lv_label_set_text_fmt(s_modal_label_b, "B   0");
+}
+
+static void modal_cancel_cb(lv_event_t *e) {
+    (void)e;
+    modal_close();
+}
+
+static void modal_refresh_preview(void) {
+    if (s_modal_swatch) {
+        lv_obj_set_style_bg_color(s_modal_swatch,
+            lv_color_make(s_modal_r, s_modal_g, s_modal_b), 0);
+    }
+    if (s_modal_label_r) lv_label_set_text_fmt(s_modal_label_r, "R %3d", s_modal_r);
+    if (s_modal_label_g) lv_label_set_text_fmt(s_modal_label_g, "G %3d", s_modal_g);
+    if (s_modal_label_b) lv_label_set_text_fmt(s_modal_label_b, "B %3d", s_modal_b);
+}
+
+static void modal_wheel_cb(lv_event_t *e) {
+    lv_color_t c = lv_colorwheel_get_rgb(lv_event_get_target(e));
+    s_modal_r = c.ch.red;
+    s_modal_g = c.ch.green;
+    s_modal_b = c.ch.blue;
+    if (s_modal_slider_r) lv_slider_set_value(s_modal_slider_r, s_modal_r, LV_ANIM_OFF);
+    if (s_modal_slider_g) lv_slider_set_value(s_modal_slider_g, s_modal_g, LV_ANIM_OFF);
+    if (s_modal_slider_b) lv_slider_set_value(s_modal_slider_b, s_modal_b, LV_ANIM_OFF);
+    modal_refresh_preview();
+}
+
+static void modal_slider_r_cb(lv_event_t *e) {
+    s_modal_r = (uint8_t)lv_slider_get_value(lv_event_get_target(e));
+    modal_refresh_preview();
+}
+static void modal_slider_g_cb(lv_event_t *e) {
+    s_modal_g = (uint8_t)lv_slider_get_value(lv_event_get_target(e));
+    modal_refresh_preview();
+}
+static void modal_slider_b_cb(lv_event_t *e) {
+    s_modal_b = (uint8_t)lv_slider_get_value(lv_event_get_target(e));
+    modal_refresh_preview();
+}
+
+static void open_virtual_color_modal(int idx) {
+    if (s_color_modal) modal_close();  // single-instance guard
+    if (idx < 0 || idx >= s_virt_count) return;
+    s_color_modal_idx = idx;
+    const VirtualInfo &v = s_virt[idx];
+
+    // Seed the modal's RGB from the virtual's current gradient color
+    // (same heuristic the row swatch uses). Falls back to warm white.
+    if (!v.gradient.isEmpty()) {
+        uint32_t hex24 = gradient_to_color(v.gradient);
+        s_modal_r = (hex24 >> 16) & 0xff;
+        s_modal_g = (hex24 >>  8) & 0xff;
+        s_modal_b =  hex24        & 0xff;
+    } else {
+        s_modal_r = 255; s_modal_g = 200; s_modal_b = 128;
+    }
+
+    // Translucent backdrop fills the screen.
+    s_color_modal = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_color_modal, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_color_modal, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_color_modal, LV_OPA_50, 0);
+    lv_obj_set_style_border_width(s_color_modal, 0, 0);
+    lv_obj_clear_flag(s_color_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Inner panel (centered) — holds the actual controls. 600×460 fits the
+    // 180×180 colorwheel + three sliders + swatch + button row comfortably.
+    lv_obj_t *panel = lv_obj_create(s_color_modal);
+    lv_obj_set_size(panel, 600, 460);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x1a1a22), 0);
+    lv_obj_set_style_radius(panel, 8, 0);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(panel, 12, 0);
+    lv_obj_set_style_pad_row(panel, 8, 0);
+
+    // Title row: "Color: <virtual name>" + Cancel button
+    lv_obj_t *hdr = lv_obj_create(panel);
+    lv_obj_set_size(hdr, LV_PCT(100), 40);
+    lv_obj_set_flex_flow(hdr, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *title = lv_label_create(hdr);
+    char t[80];
+    snprintf(t, sizeof(t), "Color: %s", v.name.c_str());
+    lv_label_set_text(title, t);
+    lv_obj_t *x = lv_btn_create(hdr);
+    lv_obj_set_style_bg_color(x, lv_color_hex(0x444444), 0);
+    lv_obj_t *xl = lv_label_create(x);
+    lv_label_set_text(xl, "Cancel");
+    lv_obj_center(xl);
+    lv_obj_add_event_cb(x, modal_cancel_cb, LV_EVENT_CLICKED, NULL);
+
+    // Color wheel
+    s_modal_wheel = lv_colorwheel_create(panel, true);
+    lv_obj_set_size(s_modal_wheel, 180, 180);
+    lv_colorwheel_set_rgb(s_modal_wheel,
+        lv_color_make(s_modal_r, s_modal_g, s_modal_b));
+    lv_obj_add_event_cb(s_modal_wheel, modal_wheel_cb,
+                        LV_EVENT_VALUE_CHANGED, NULL);
+
+    // RGB sliders
+    auto make_modal_slider = [&](const char *label_text,
+                                 lv_obj_t **slider_out,
+                                 lv_obj_t **label_out,
+                                 lv_event_cb_t cb) {
+        lv_obj_t *row = lv_obj_create(panel);
+        lv_obj_set_size(row, LV_PCT(100), 36);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *l = lv_label_create(row);
+        lv_label_set_text(l, label_text);
+        *label_out = l;
+        *slider_out = lv_slider_create(row);
+        lv_obj_set_width(*slider_out, 350);
+        lv_slider_set_range(*slider_out, 0, 255);
+        lv_obj_add_event_cb(*slider_out, cb, LV_EVENT_VALUE_CHANGED, NULL);
+        return row;
+    };
+    make_modal_slider("R", &s_modal_slider_r, &s_modal_label_r, modal_slider_r_cb);
+    make_modal_slider("G", &s_modal_slider_g, &s_modal_label_g, modal_slider_g_cb);
+    make_modal_slider("B", &s_modal_slider_b, &s_modal_label_b, modal_slider_b_cb);
+    lv_slider_set_value(s_modal_slider_r, s_modal_r, LV_ANIM_OFF);
+    lv_slider_set_value(s_modal_slider_g, s_modal_g, LV_ANIM_OFF);
+    lv_slider_set_value(s_modal_slider_b, s_modal_b, LV_ANIM_OFF);
+
+    // Swatch
+    s_modal_swatch = lv_obj_create(panel);
+    lv_obj_set_size(s_modal_swatch, LV_PCT(100), 40);
+    lv_obj_set_style_border_width(s_modal_swatch, 1, 0);
+    lv_obj_set_style_border_color(s_modal_swatch, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_radius(s_modal_swatch, 4, 0);
+    modal_refresh_preview();
+
+    // Buttons: Black (closest-to-off) + Apply
+    lv_obj_t *btnrow = lv_obj_create(panel);
+    lv_obj_set_size(btnrow, LV_PCT(100), 50);
+    lv_obj_set_flex_flow(btnrow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnrow, LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(btnrow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *black = lv_btn_create(btnrow);
+    lv_obj_set_style_bg_color(black, lv_color_hex(0x222222), 0);
+    lv_obj_set_size(black, 140, 40);
+    lv_obj_t *bl = lv_label_create(black);
+    lv_label_set_text(bl, "Black");
+    lv_obj_center(bl);
+    lv_obj_add_event_cb(black, modal_black_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *apply = lv_btn_create(btnrow);
+    lv_obj_set_style_bg_color(apply, lv_color_hex(0x2266cc), 0);
+    lv_obj_set_size(apply, 140, 40);
+    lv_obj_t *al = lv_label_create(apply);
+    lv_label_set_text(al, LV_SYMBOL_OK "  Apply");
+    lv_obj_center(al);
+    lv_obj_add_event_cb(apply, modal_apply_cb, LV_EVENT_CLICKED, NULL);
+}
 
 void ui_virtuals_pump_result(int status, int count, VirtualInfo *data,
                              const GlobalsState &globals, const char *err) {

@@ -82,3 +82,7 @@ Request req_flag(ReqType t, bool flag);
 // One-shot test-connection request. URL, optional user, optional pass.
 // Encoded as a tiny JSON object in the payload field.
 Request req_test_connection(const String &url, const String &user, const String &pass);
+// Set a single virtual's background_color, preserving all other effect config.
+// `type` must match the virtual's active effect; `color_hex` is "#rrggbb".
+Request req_set_virtual_color(const String &id, const String &type,
+                              const String &color_hex);
