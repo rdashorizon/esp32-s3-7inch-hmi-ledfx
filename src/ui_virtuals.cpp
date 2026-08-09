@@ -41,6 +41,13 @@ static lv_obj_t *s_banner = nullptr;
 static lv_timer_t *s_banner_timer = nullptr;
 static const uint32_t BANNER_TIMEOUT_MS = 3000;
 
+// Tier 2.1: the row index of the most recent successful color apply.
+// The next time render_virt_list() draws that row, it gets a green border
+// for ~1.5 s as confirmation. -1 means "no recent apply".
+static int  s_last_set_idx = -1;
+static uint32_t s_last_set_ms = 0;
+static const uint32_t FLASH_TIMEOUT_MS = 1500;
+
 // ---- Helpers ---------------------------------------------------------------
 static void obj_show(lv_obj_t *o, bool show) {
     if (!o) return;
@@ -151,6 +158,15 @@ static void render_virt_list(void) {
         // Long-press the row to inspect; the row owns the user_data index.
         lv_obj_set_user_data(row, (void *)(intptr_t)i);
         lv_obj_add_event_cb(row, virt_row_long, LV_EVENT_LONG_PRESSED, NULL);
+
+        // Tier 2.1: briefly highlight the most recently color-set row.
+        bool recent = (i == s_last_set_idx)
+                   && (millis() - s_last_set_ms < FLASH_TIMEOUT_MS);
+        if (recent) {
+            lv_obj_set_style_border_width(row, 2, 0);
+            lv_obj_set_style_border_color(row, lv_color_hex(0x44cc66), 0);
+            lv_obj_set_style_radius(row, 4, 0);
+        }
 
         // Subtitle: effect type, plus the effect's display name when it adds info.
         String sub;
@@ -285,6 +301,10 @@ static void modal_apply_cb(lv_event_t *e) {
         modal_close();
         return;
     }
+    // Record for the flash-on-next-render (Tier 2.1). Stale entries expire
+    // after FLASH_TIMEOUT_MS — checked at render time.
+    s_last_set_idx = s_color_modal_idx;
+    s_last_set_ms = millis();
     char hex[8];
     snprintf(hex, sizeof(hex), "#%02x%02x%02x", s_modal_r, s_modal_g, s_modal_b);
     ui_submit(req_set_virtual_color(v.id, v.effect_type, hex));
