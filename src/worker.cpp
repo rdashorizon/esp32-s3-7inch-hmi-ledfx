@@ -100,6 +100,13 @@ static void do_fetch_virtuals() {
     GlobalsState g;
     int code = g_ledfx.fetch_virtuals(arr, n, &g);
     Serial.printf("[net] GET /api/virtuals -> HTTP %d, %d virtuals\n", code, n);
+    // Master brightness lives in /api/config, not /api/virtuals.
+    int bpct = 100;
+    if (g_ledfx.fetch_global_brightness(bpct) == 200) {
+        g.brightness = bpct;
+        g.has_brightness = true;
+        Serial.printf("[net] global_brightness = %d%%\n", bpct);
+    }
     // Post the list plus the global state (pause/brightness/mirror/flip).
     Result r{};
     r.type = RES_VIRTUALS;
@@ -183,6 +190,11 @@ static void handle(const Request &req) {
             post_action(c, c == 200 ? "Gradient set" : "Gradient failed");
             break;
         }
+        case REQ_SET_BRIGHTNESS: {
+            int c = g_ledfx.set_global_brightness(req.arg);
+            post_action(c, c == 200 ? "Brightness set" : "Brightness failed");
+            break;
+        }
     }
 }
 
@@ -235,5 +247,12 @@ Request req_payload(ReqType t, const String &payload) {
     Request r{};
     r.type = t;
     strncpy(r.payload, payload.c_str(), sizeof(r.payload) - 1);
+    return r;
+}
+
+Request req_arg(ReqType t, int arg) {
+    Request r{};
+    r.type = t;
+    r.arg = arg;
     return r;
 }

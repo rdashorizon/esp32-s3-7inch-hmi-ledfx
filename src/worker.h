@@ -26,6 +26,7 @@ enum ReqType : uint8_t {
     REQ_PAUSE_ALL,           // flag
     REQ_APPLY_GLOBAL,        // payload = json body
     REQ_SET_GRADIENT,        // payload = preset name
+    REQ_SET_BRIGHTNESS,      // arg = 0..100 (global_brightness %)
 };
 
 // Fixed buffers (no heap-owning members) so the struct is safe to copy by
@@ -33,6 +34,7 @@ enum ReqType : uint8_t {
 struct Request {
     ReqType type;
     bool    flag;
+    int     arg;
     char    id[48];
     char    payload[224];
 };
@@ -68,3 +70,4 @@ bool worker_poll(Result &out);
 Request req_simple(ReqType t);
 Request req_id(ReqType t, const String &id, bool flag = false);
 Request req_payload(ReqType t, const String &payload);
+Request req_arg(ReqType t, int arg);

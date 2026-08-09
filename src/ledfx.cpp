@@ -99,15 +99,15 @@ int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count, GlobalsState *glo
         if (!eff.isNull()) {
             out[i].effect_type = eff["type"] | "";
             out[i].effect_name = eff["name"] | "";
-            // Take brightness/mirror/flip from the first active effect as the
-            // representative global values (apply_global keeps them in sync).
-            if (globals && !globals->has_effect && (kv.value()["active"] | false)) {
+            // Take mirror/flip from the first active effect as the
+            // representative values (apply_global keeps them in sync). Brightness
+            // is not here — it's the master global_brightness in /api/config.
+            if (globals && !globals->has_flags && (kv.value()["active"] | false)) {
                 JsonObject ec = eff["config"];
                 if (!ec.isNull()) {
-                    globals->brightness = (int)(((float)(ec["brightness"] | 1.0f)) * 100.0f + 0.5f);
-                    globals->mirror     = ec["mirror"] | false;
-                    globals->flip       = ec["flip"] | false;
-                    globals->has_effect = true;
+                    globals->mirror    = ec["mirror"] | false;
+                    globals->flip      = ec["flip"] | false;
+                    globals->has_flags = true;
                 }
             }
         }
@@ -189,6 +189,32 @@ int LedFxClient::pause_all(bool paused) {
     serializeJson(doc, body);
     String resp;
     return net.put_json(_url("/api/virtuals"), body, resp);
+}
+
+int LedFxClient::set_global_brightness(int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    StaticJsonDocument<64> doc;
+    doc["global_brightness"] = pct / 100.0f;
+    String body;
+    serializeJson(doc, body);
+    String resp;
+    return net.put_json(_url("/api/config"), body, resp);
+}
+
+int LedFxClient::fetch_global_brightness(int &pct) {
+    String body;
+    int code = net.get(_url("/api/config"), body);
+    if (code != 200) return code;
+    // Filter so only global_brightness is parsed — the full config is large.
+    StaticJsonDocument<64> filter;
+    filter["global_brightness"] = true;
+    StaticJsonDocument<96> doc;
+    if (deserializeJson(doc, body, DeserializationOption::Filter(filter)) != DeserializationError::Ok)
+        return 500;
+    float gb = doc["global_brightness"] | 1.0f;
+    pct = (int)(gb * 100.0f + 0.5f);
+    return 200;
 }
 
 int LedFxClient::set_gradient(const String &name) {

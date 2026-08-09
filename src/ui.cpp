@@ -247,11 +247,10 @@ static void submit_global(const JsonDocument &doc) {
 
 static void bright_apply_cb(lv_event_t *e) {
     (void)e;
+    // Drive LedFx's master global_brightness (config), so it matches the main
+    // LedFx brightness and dims the whole installation.
     int v = lv_slider_get_value(s_bright_slider);
-    StaticJsonDocument<128> doc;
-    doc["action"] = "apply_global";
-    doc["brightness"] = v / 100.0f;
-    submit_global(doc);
+    worker_submit(req_arg(REQ_SET_BRIGHTNESS, v));
     ui_show_status("Applying brightness…");
 }
 
@@ -314,11 +313,13 @@ static void set_sw(lv_obj_t *sw, bool on) {
 static void apply_globals_to_ui(const GlobalsState &g) {
     if (!g.valid) return;
     set_sw(s_pause_sw, g.paused);
-    if (g.has_effect) {
-        if (s_bright_slider) lv_slider_set_value(s_bright_slider, g.brightness, LV_ANIM_OFF);
-        if (s_bright_value)  lv_label_set_text_fmt(s_bright_value, "%d%%", g.brightness);
+    if (g.has_flags) {
         set_sw(s_mirror_sw, g.mirror);
         set_sw(s_flip_sw, g.flip);
+    }
+    if (g.has_brightness) {
+        if (s_bright_slider) lv_slider_set_value(s_bright_slider, g.brightness, LV_ANIM_OFF);
+        if (s_bright_value)  lv_label_set_text_fmt(s_bright_value, "%d%%", g.brightness);
     }
 }
 

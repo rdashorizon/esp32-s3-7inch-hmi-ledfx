@@ -22,16 +22,18 @@ struct VirtualInfo {
     bool   streaming = false;
 };
 
-// Server-side global state, derived from GET /api/virtuals. `paused` is the
-// top-level field; brightness/mirror/flip are read from the first active
-// effect's config (apply_global keeps these in sync across active effects).
+// Server-side global state. `paused` and mirror/flip come from GET /api/virtuals
+// (paused is top-level; mirror/flip from the first active effect). `brightness`
+// is LedFx's master global_brightness from GET /api/config — the value the main
+// LedFx brightness slider drives (frame *= max_brightness * global_brightness).
 struct GlobalsState {
-    bool valid      = false;  // the response parsed
-    bool paused     = false;
-    bool has_effect = false;  // an active effect supplied brightness/mirror/flip
-    int  brightness = 100;    // 0..100 (%)
-    bool mirror     = false;
-    bool flip       = false;
+    bool valid          = false;  // /api/virtuals parsed
+    bool paused         = false;
+    bool has_flags      = false;  // an active effect supplied mirror/flip
+    bool mirror         = false;
+    bool flip           = false;
+    bool has_brightness = false;  // global_brightness read from /api/config
+    int  brightness     = 100;    // 0..100 (%)
 };
 
 class LedFxClient {
@@ -60,6 +62,10 @@ public:
 
     // Apply one of the built-in LedFx gradient presets (Global screen).
     int set_gradient(const String &name);
+
+    // LedFx master brightness (config global_brightness, 0..100 %).
+    int set_global_brightness(int pct);
+    int fetch_global_brightness(int &pct);
 
     bool is_connected() const { return net.has_token(); }
 
