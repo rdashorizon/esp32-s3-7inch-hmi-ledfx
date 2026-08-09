@@ -19,6 +19,11 @@ public:
     void save(const Config &cfg);
     void clear();
 
+    // Panel backlight level (0..100 %), persisted independently of the WiFi/
+    // LedFx config so it survives reboots. Returns `def` when never set.
+    uint8_t load_screen_brightness(uint8_t def = 100);
+    void    save_screen_brightness(uint8_t pct);
+
     // Captive portal DNS+webserver. Blocks until the user submits a config
     // or until timeout_seconds elapses. Returns true if a config was saved.
     bool run_captive_portal(uint32_t timeout_seconds = 0);

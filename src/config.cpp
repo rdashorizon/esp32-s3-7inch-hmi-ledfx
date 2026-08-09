@@ -21,6 +21,7 @@ static const char *K_URL  = "ledfx_url";
 static const char *K_USER = "ledfx_user";
 static const char *K_LPASS = "ledfx_pass";
 static const char *K_AP_TOUT = "ap_timeout";
+static const char *K_SCRBRI = "scr_bright";
 
 static const byte DNS_PORT = 53;
 static const IPAddress AP_IP(4, 3, 2, 1);
@@ -83,6 +84,23 @@ void ConfigStore::clear() {
     prefs.clear();
     prefs.end();
     _has_wifi = _has_ledfx = false;
+}
+
+uint8_t ConfigStore::load_screen_brightness(uint8_t def) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    uint8_t pct = prefs.getUChar(K_SCRBRI, def);
+    prefs.end();
+    if (pct > 100) pct = 100;
+    return pct;
+}
+
+void ConfigStore::save_screen_brightness(uint8_t pct) {
+    if (pct > 100) pct = 100;
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    prefs.putUChar(K_SCRBRI, pct);
+    prefs.end();
 }
 
 bool ConfigStore::run_captive_portal(uint32_t timeout_seconds) {
