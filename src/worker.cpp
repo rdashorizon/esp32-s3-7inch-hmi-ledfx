@@ -256,3 +256,10 @@ Request req_arg(ReqType t, int arg) {
     r.arg = arg;
     return r;
 }
+
+Request req_flag(ReqType t, bool flag) {
+    Request r{};
+    r.type = t;
+    r.flag = flag;
+    return r;
+}

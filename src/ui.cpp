@@ -179,7 +179,7 @@ static void clear_all_cb(lv_event_t *e) {
 static void pause_all_cb(lv_event_t *e) {
     lv_obj_t *sw = lv_event_get_target(e);
     bool paused = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    worker_submit(req_id(REQ_PAUSE_ALL, String(), paused));
+    worker_submit(req_flag(REQ_PAUSE_ALL, paused));
 }
 
 // Ask the worker for a fresh virtual list; render_virt_list() paints the reply.

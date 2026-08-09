@@ -71,3 +71,6 @@ Request req_simple(ReqType t);
 Request req_id(ReqType t, const String &id, bool flag = false);
 Request req_payload(ReqType t, const String &payload);
 Request req_arg(ReqType t, int arg);
+// For requests that only carry a bool (e.g. REQ_PAUSE_ALL). Prefer this over
+// req_id() with an empty id — the empty-id call site is misleading.
+Request req_flag(ReqType t, bool flag);
