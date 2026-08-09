@@ -8,6 +8,17 @@
 //
 // A bottom status bar shows WiFi state, LedFx server, last refresh time.
 // ---------------------------------------------------------------------------
+//
+// THREADING OWNERSHIP
+// All UI state below is owned by the LVGL thread (core 1):
+//   - s_scenes / s_scene_count — written only by result_pump_cb (RES_SCENES)
+//   - s_virt   / s_virt_count   — written only by result_pump_cb (RES_VIRTUALS)
+//   - s_link_ok                 — written only by result_pump_cb (RES_CONN)
+// Reads happen from LVGL event callbacks and timers on the same thread — safe.
+// The worker (core 0) MUST NOT touch any of these directly; it goes through
+// worker_submit() and posts a Result. If you need a new piece of cross-thread
+// state, add it to the Result struct in worker.h and read it in the pump.
+// ---------------------------------------------------------------------------
 #include "ui.h"
 #include "ledfx.h"     // SceneInfo / VirtualInfo
 #include "worker.h"    // background network worker (submit/poll)
