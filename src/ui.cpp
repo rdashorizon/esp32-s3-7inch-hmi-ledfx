@@ -34,6 +34,7 @@
 #include "ui_scenes.h"    // Scenes tab
 #include "ui_virtuals.h"  // Virtuals tab + pause-all switch
 #include <ArduinoJson.h>
+#include <stdarg.h>       // va_list for ui_show_status_fmt()
 
 extern Config g_config;  // see main.cpp
 
@@ -223,6 +224,17 @@ void ui_show_status(const char *msg, bool is_error) {
     lv_label_set_text(s_status_label, msg);
     lv_obj_set_style_text_color(s_status_label,
                                 is_error ? lv_color_hex(0xff4444) : lv_color_hex(0xcccccc), 0);
+}
+
+// printf-style variant — avoids the temporary String allocation that
+// ("Foo: " + name).c_str() would otherwise create on every event.
+void ui_show_status_fmt(bool is_error, const char *fmt, ...) {
+    static char buf[96];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    ui_show_status(buf, is_error);
 }
 
 void ui_refresh_scenes(void)   { ui_scenes_request_refresh(); }

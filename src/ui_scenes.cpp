@@ -37,7 +37,7 @@ static void scene_btn_clicked(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
     if (idx < 0 || idx >= s_scene_count) return;
     worker_submit(req_id(REQ_ACTIVATE_SCENE, s_scenes[idx].id));
-    ui_show_status(("Activating: " + s_scenes[idx].name).c_str());
+    ui_show_status_fmt(false, "Activating: %s", s_scenes[idx].name.c_str());
 }
 
 static void scene_btn_long(lv_event_t *e) {
@@ -45,7 +45,7 @@ static void scene_btn_long(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
     if (idx < 0 || idx >= s_scene_count) return;
     worker_submit(req_id(REQ_DEACTIVATE_SCENE, s_scenes[idx].id));
-    ui_show_status(("Deactivating: " + s_scenes[idx].name).c_str());
+    ui_show_status_fmt(false, "Deactivating: %s", s_scenes[idx].name.c_str());
 }
 
 // ---- Paint -----------------------------------------------------------------

@@ -44,7 +44,7 @@ static void virt_randomize(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
     if (idx < 0 || idx >= s_virt_count) return;
     worker_submit(req_id(REQ_RANDOMIZE_VIRTUAL, s_virt[idx].id));
-    ui_show_status(("Randomizing: " + s_virt[idx].name).c_str());
+    ui_show_status_fmt(false, "Randomizing: %s", s_virt[idx].name.c_str());
 }
 
 static void clear_all_cb(lv_event_t *e) {

@@ -83,7 +83,7 @@ static void gradient_cb(lv_event_t *e) {
     char buf[32] = {0};
     lv_dropdown_get_selected_str(dd, buf, sizeof(buf));
     worker_submit(req_payload(REQ_SET_GRADIENT, String(buf)));
-    ui_show_status((String("Gradient: ") + buf).c_str());
+    ui_show_status_fmt(false, "Gradient: %s", buf);
 }
 
 // ---- Status row + indicator ------------------------------------------------
