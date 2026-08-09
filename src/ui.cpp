@@ -33,6 +33,7 @@
 #include "ui_global.h"    // Global tab + dim + splash + conn indicator
 #include "ui_scenes.h"    // Scenes tab
 #include "ui_virtuals.h"  // Virtuals tab + pause-all switch
+#include "ui_color.h"     // Color picker tab
 #include "ui_overlay.h"   // slow-network overlay
 #include <ArduinoJson.h>
 #include <stdarg.h>       // va_list for ui_show_status_fmt()
@@ -43,6 +44,7 @@ static lv_obj_t *s_root;
 static lv_obj_t *s_tabview;
 static lv_obj_t *s_tab_scenes;
 static lv_obj_t *s_tab_virtuals;
+static lv_obj_t *s_tab_color;
 static lv_obj_t *s_tab_global;
 static lv_obj_t *s_status_label;
 
@@ -194,6 +196,7 @@ void ui_init(void) {
     s_tabview = lv_tabview_create(s_root, LV_DIR_TOP, 40);
     s_tab_scenes   = lv_tabview_add_tab(s_tabview, "Scenes");
     s_tab_virtuals = lv_tabview_add_tab(s_tabview, "Virtuals");
+    s_tab_color    = lv_tabview_add_tab(s_tabview, "Color");
     s_tab_global   = lv_tabview_add_tab(s_tabview, "Global");
     // Restore the last-selected tab (default Scenes). This fires the
     // LV_EVENT_VALUE_CHANGED callback, which also kicks off the per-tab
@@ -210,6 +213,7 @@ void ui_init(void) {
     // Per-tab UIs live in their own modules.
     ui_scenes_build(s_tab_scenes);
     ui_virtuals_build(s_tab_virtuals);
+    ui_color_build(s_tab_color);
     build_global_screen();
 
     ui_show_status("Connecting to LedFx…");

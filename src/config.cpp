@@ -143,8 +143,9 @@ uint8_t ConfigStore::load_last_tab(uint8_t def) {
     prefs.begin(NVS_NS, true);
     uint8_t idx = prefs.getUChar(K_LASTTAB, def);
     prefs.end();
-    // Clamp to a sane range; corrupted NVS could land us anywhere.
-    if (idx > 2) idx = def;
+    // Clamp to a sane range; corrupted NVS could land us anywhere. Four
+    // tabs total (Scenes/Virtuals/Color/Global).
+    if (idx > 3) idx = def;
     return idx;
 }
 
