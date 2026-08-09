@@ -31,7 +31,7 @@ Detection: read GT911 reset line state at boot; I2C/GT911 driver is identical.
 
 ## 4. UI (hybrid scope)
 
-Three screens behind a top tab bar:
+Four screens behind a top tab bar (the last-selected tab persists in NVS):
 
 ### Screen 1 — Scenes
 - Grid of scene buttons (4 columns, scrollable)
@@ -40,48 +40,86 @@ Three screens behind a top tab bar:
 
 ### Screen 2 — Virtuals
 - List of every virtual
-- Per-row: name, active effect type, ON/OFF toggle, 🎲 randomize
+- Per-row: name, active effect type, 20×20 gradient preview swatch, ON/OFF toggle, 🎲 randomize
 - Top toolbar: pause-all toggle, clear-all-effects button
+- Long-press a row → inspect (msgbox with id / active / effect / gradient)
 
-### Screen 3 — Global
-- Slider: brightness 0.0–1.0 (applies via `PUT /api/effects`)
+### Screen 3 — Color
+- LVGL colorwheel (HSV) + R/G/B sliders (0–255)
+- Live-preview swatch follows the wheel and sliders in real time
+- Throttled live-apply during drag (≤ 1 PUT / 250 ms)
+- Apply button (manual send) + Black button (`background_color: "#000000"` — closest substitute for an "off" state; see §12)
+- Transient error banner surfaces apply failures on the tab itself (3 s auto-dismiss)
+- Last picked color persists in NVS and is restored on boot (see §12)
+
+### Screen 4 — Global
+- Slider: brightness 0.0–1.0 (applies via `PUT /api/config`)
 - Toggle: mirror / flip
 - Slider: gradient name (presets: rainbow, sunset, ocean…)
 - Status row: server URL, last refresh, connection state
+- Settings + Reset buttons
 
 ### Setup (captive portal)
 - First boot: AP `ledfx-hmi-setup` + form for SSID, password, LedFx URL, user, pass
+- Per-device PSK derived from the chip's efuse MAC last-3-bytes (printed on the form); WPA2 requires 8+ chars so a fixed suffix is appended
 - Saved to NVS
 - 3 failed connection attempts → reverts to AP mode
+- Captive-portal `/save` validates the LedFx URL is `http(s)://...` before persisting; the on-device settings editor does the same and rejects invalid input without rebooting
 
 ## 5. LedFx REST API surface
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/auth/login` | Bearer token |
+| `POST` | `/api/auth/login` | Bearer token (optional — only used when the user supplied credentials in setup) |
 | `GET`  | `/api/scenes` | List scenes |
 | `PUT`  | `/api/scenes` `{id,action:"activate"\|"deactivate"}` | Toggle scene |
-| `GET`  | `/api/virtuals` | List virtuals |
+| `GET`  | `/api/virtuals` | List virtuals + top-level `paused` |
+| `PUT`  | `/api/virtuals` `{paused:bool}` | Pause/resume all virtual output |
 | `PUT`  | `/api/virtuals/{id}` `{active:bool}` | Toggle virtual |
 | `PUT`  | `/api/virtuals/{id}/effects` `{config:"RANDOMIZE"}` | Randomize |
 | `PUT`  | `/api/effects` `{action:"clear_all_effects"}` | Clear all |
-| `PUT`  | `/api/effects` `{action:"apply_global", brightness, …}` | Globals |
+| `PUT`  | `/api/effects` `{action:"apply_global", background_color:"#rrggbb"}` | Set global LED color |
+| `PUT`  | `/api/effects` `{action:"apply_global", gradient:"Rainbow"}` | Set global gradient |
+| `PUT`  | `/api/effects` `{action:"apply_global", mirror\|flip:true\|false}` | Toggle mirror/flip |
+| `GET`/`PUT` | `/api/config` `{global_brightness:0.0..1.0}` | Master brightness |
 
-All non-auth calls carry `Authorization: Bearer <token>`.
+When credentials are configured, non-auth calls carry `Authorization: Bearer …`;
+mainline LedFx has no auth and the controller connects tokenless in that case.
 
 ## 6. Module layout
 
 ```
 src/
-  main.cpp       setup + loop, glue
-  pins.h         RGB + touch pin map
-  display.h/.cpp LovyanGFX panel + backlight
-  touch.h/.cpp   GT911 I2C driver, LVGL indev
-  lvgl_port.h/.cpp LVGL tick/draw/loop
-  config.h/.cpp  NVS + captive portal
-  net.h/.cpp    WiFi + HTTPClient with bearer
-  ledfx.h/.cpp  REST client, named methods
-  ui.h/.cpp     LVGL screens
+  main.cpp        setup + loop, glue; periodic heap watermark on core 0
+  pins.h          RGB + GT911 + backlight pin map
+  display.h/.cpp  LovyanGFX panel + PWM backlight
+  touch.h/.cpp    GT911 I2C driver, LVGL input device (throttled to ~60 Hz)
+  lvgl_port.h/.cpp  LVGL tick/draw/loop; PSRAM draw buffers
+  config.h/.cpp   NVS (Preferences) + captive portal + screen brightness +
+                  last-tab + last-color persistence; URL validator
+  net.h/.cpp      WiFi + HTTPClient with bearer-token re-auth (Net::login
+                  returns LoginStatus so the UI can distinguish NOT_FOUND
+                  from BAD_CREDS from TRANSPORT)
+  ledfx.h/.cpp    REST client with named methods (also reads the gradient
+                  field from each virtual's effect config for the per-row
+                  swatch in §4 Screen 2)
+  worker.h/.cpp   FreeRTOS task pinned to core 0 + request/result queues;
+                  request builders: req_simple/req_id/req_payload/req_arg/
+                  req_flag/req_test_connection
+  ui.h/.cpp       Tabview + result pump + glue (target: <250 LOC)
+  ui_global.{h,cpp}     Global tab + connection indicator + panel-bright
+                        slider + auto-dim + boot splash
+  ui_scenes.{h,cpp}     Scenes tab (4-column grid, scrollable)
+  ui_virtuals.{h,cpp}   Virtuals tab (list + pause-all toolbar + clear-all +
+                        long-press inspect)
+  ui_color.{h,cpp}      Color picker tab (colorwheel + RGB sliders + swatch
+                        + Apply/Black + transient error banner)
+  ui_settings.{h,cpp}   On-device settings editor (separate LVGL screen;
+                        URL validation rejects without rebooting)
+  ui_overlay.{h,cpp}    Slow-network overlay (top-layer "still working…"
+                        after 1.5 s of submit-with-no-progress)
+include/
+  lv_conf.h       LVGL 8.3 overrides (RGB565, 48 KB obj pool, Montserrat 14)
 ```
 
 ## 7. Memory
@@ -131,3 +169,43 @@ sections 5–8 turned out wrong:
 
 mDNS auto-discovery of the LedFx server, live WebSocket state (vs polling), OTA
 updates, and MQTT / Home Assistant integration.
+
+## 12. As-built notes — Color picker + related (post-color-picker)
+
+The Color tab is the first new feature shipped after §10. Constraints worth
+recording before they get lost:
+
+- **Color = `background_color`, not `color`.** LedFx's `apply_global` accepts
+  `background_color` (CSS-style hex like `"#ff8040"`, validated by
+  `LedFx/ledfx/color.py::validate_color`). The first draft of this feature
+  used `{"color":{r,g,b}}` — wrong key, silently rejected. The
+  colorwheel's RGB output is now hex-encoded and sent under
+  `background_color`. Confirmed against `LedFx/docs/apis/global.md` and the
+  handler in `LedFx/ledfx/api/effects.py::_apply_global`.
+- **No "off" state.** `apply_global` requires at least one of
+  `{gradient, background_color, background_brightness, brightness, flip,
+  mirror}`. Sending `{action:"apply_global"}` alone returns 400
+  "invalid_request". The closest substitute is `background_color: "#000000"`,
+  which is what the **Black** button does.
+- **Only effects that opt-in get touched.** `apply_global` is effect-scoped,
+  not virtual- or pixel-scoped. Effects without `background_color` in their
+  config schema (gradient-based effects) silently skip the update. The API
+  still returns 200 with `Applied to N effects (skipped M)` — we don't
+  currently parse the success body to surface the skipped count.
+- **No per-virtual color endpoint** in the same shape. Per-effect config goes
+  via `PUT /api/virtuals/{id}/effects`, a different code path — out of scope
+  for the global Color tab.
+- **Boot-time re-apply is skipped on first boot.** If the saved color matches
+  the warm-white default (255, 200, 128) — i.e. the user has never picked
+  anything — `setup()` does not send a redundant `apply_global` to LedFx.
+  After the first pick, the boot re-apply fires so the LED strip matches the
+  device's display state without user action.
+- **Color picker UI module:** `src/ui_color.{h,cpp}`. Color lives in NVS as
+  3 raw bytes (`K_LASTCLR` key in the `ledfx-hmi` namespace) — not a JSON
+  blob, to keep the read/write footprint small. The struct is named
+  `LedColor` rather than the more obvious `RGBColor` to avoid colliding with
+  LovyanGFX's `RGBColor` (which has `R8/G8/B8` accessors).
+- **Tab-index ordering:** Scenes=0, Virtuals=1, Color=2, Global=3. The result
+  pump uses the literal `2` to forward `RES_ACTION` to the Color tab's
+  error-banner handler — if a 5th tab gets added, that constant needs to
+  follow the shift or be replaced with a pointer-equality check.
