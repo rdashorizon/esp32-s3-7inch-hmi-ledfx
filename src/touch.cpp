@@ -71,6 +71,21 @@ void touch_init(void) {
 
 void touch_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
     (void)drv;
+    // Throttle the I2C poll: GT911 INT isn't wired on V2.0, so we have to
+    // poll, but 30 Hz is overkill for finger tracking and burns the I2C bus.
+    // 60 Hz is the canonical human-input sample rate; if no new frame is
+    // available the GT911 status register returns 0x00 and we keep the last
+    // known state.
+    static uint32_t last_poll_ms = 0;
+    uint32_t now = millis();
+    if (now - last_poll_ms < 16) {
+        data->point.x = touch_last_x;
+        data->point.y = touch_last_y;
+        data->state = touch_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+        return;
+    }
+    last_poll_ms = now;
+
     uint8_t status = 0;
     gt911_read(0x814E, &status, 1);
     // Bit 7 (0x80) = "buffer ready": the GT911 has a fresh frame for us. It
