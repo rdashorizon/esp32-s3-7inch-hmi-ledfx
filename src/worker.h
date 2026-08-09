@@ -16,6 +16,7 @@
 
 enum ReqType : uint8_t {
     REQ_CONNECT,             // (re)connect WiFi + login, report status
+    REQ_TEST_CONNECTION,     // one-shot WiFi + LedFx URL probe (settings editor)
     REQ_FETCH_SCENES,
     REQ_FETCH_VIRTUALS,
     REQ_ACTIVATE_SCENE,      // id
@@ -74,3 +75,6 @@ Request req_arg(ReqType t, int arg);
 // For requests that only carry a bool (e.g. REQ_PAUSE_ALL). Prefer this over
 // req_id() with an empty id — the empty-id call site is misleading.
 Request req_flag(ReqType t, bool flag);
+// One-shot test-connection request. URL, optional user, optional pass.
+// Encoded as a tiny JSON object in the payload field.
+Request req_test_connection(const String &url, const String &user, const String &pass);

@@ -9,7 +9,8 @@
 // ---------------------------------------------------------------------------
 #include "ui_settings.h"
 #include "ui.h"         // for ui_show_status, ui_root
-#include "config.h"     // g_config, config_store
+#include "config.h"     // g_config, config_store, config_url_is_valid
+#include "worker.h"     // req_test_connection
 #include <Arduino.h>    // ESP.restart, delay
 #include <lvgl.h>
 
@@ -81,12 +82,26 @@ static lv_obj_t *settings_field(lv_obj_t *parent, const char *label,
     return ta;
 }
 
+// Test the URL/credentials over the current WiFi (no save, no reboot).
+static void settings_test_cb(lv_event_t *e) {
+    (void)e;
+    if (!config_url_is_valid(lv_textarea_get_text(s_ta_url))) {
+        ui_show_status("Invalid LedFx URL — must start with http:// or https://", true);
+        return;
+    }
+    ui_submit(req_test_connection(
+        lv_textarea_get_text(s_ta_url),
+        lv_textarea_get_text(s_ta_user),
+        lv_textarea_get_text(s_ta_lpass)));
+    ui_show_status("Testing connection…");
+}
+
 static void settings_open(void) {
     s_settings_scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_settings_scr, lv_color_hex(0x0d0d14), 0);
     lv_obj_clear_flag(s_settings_scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Header: Back / title / Save
+    // Header: Back / title / Test / Save
     lv_obj_t *hdr = lv_obj_create(s_settings_scr);
     lv_obj_set_size(hdr, LV_PCT(100), 56);
     lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 0);
@@ -96,6 +111,10 @@ static void settings_open(void) {
     lv_obj_t *bl = lv_label_create(back); lv_label_set_text(bl, LV_SYMBOL_LEFT " Back"); lv_obj_center(bl);
     lv_obj_add_event_cb(back, settings_back_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *ttl = lv_label_create(hdr); lv_label_set_text(ttl, "Settings");
+    lv_obj_t *test = lv_btn_create(hdr);
+    lv_obj_set_style_bg_color(test, lv_color_hex(0x444444), 0);
+    lv_obj_t *tl = lv_label_create(test); lv_label_set_text(tl, LV_SYMBOL_REFRESH " Test"); lv_obj_center(tl);
+    lv_obj_add_event_cb(test, settings_test_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *save = lv_btn_create(hdr);
     lv_obj_set_style_bg_color(save, lv_color_hex(0x2266cc), 0);
     lv_obj_t *svl = lv_label_create(save); lv_label_set_text(svl, LV_SYMBOL_SAVE " Save"); lv_obj_center(svl);

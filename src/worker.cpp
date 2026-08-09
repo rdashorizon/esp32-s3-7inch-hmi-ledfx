@@ -10,6 +10,7 @@
 #include "config.h"
 
 #include <WiFi.h>
+#include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -22,6 +23,9 @@ static QueueHandle_t s_res_q = nullptr;
 static const int      QUEUE_LEN   = 12;
 static const uint32_t WORKER_STACK = 12288;  // HTTP client + JSON parse headroom
 static const TickType_t IDLE_TICKS = pdMS_TO_TICKS(3000);  // maintenance cadence
+static const uint16_t HTTP_TIMEOUT_MS = 6000;  // matches net.cpp; copied here so
+                                                // the test-connection probe
+                                                // doesn't need to include net.cpp
 
 // ---- Result posting (worker side) -----------------------------------------
 static void post_action(int status, const char *msg) {
@@ -156,6 +160,54 @@ static void handle(const Request &req) {
                               ? "yes" : "none");
             break;
 
+        case REQ_TEST_CONNECTION: {
+            // Probe the supplied LedFx URL using the current WiFi. Parse the
+            // payload back into url/user/pass, do a tokenless GET /api/scenes,
+            // and post a one-shot RES_CONN-style result. The UI displays the
+            // outcome without rebooting or persisting anything.
+            StaticJsonDocument<256> doc;
+            if (deserializeJson(doc, req.payload) != DeserializationError::Ok) {
+                post_conn(false, "Test: bad payload");
+                break;
+            }
+            String url = doc["url"] | "";
+            String user = doc["user"] | "";
+            String pass = doc["password"] | "";
+            if (url.isEmpty()) {
+                post_conn(false, "Test: missing URL");
+                break;
+            }
+            Serial.printf("[test] probing %s (auth=%s)\n", url.c_str(),
+                          user.isEmpty() ? "no" : "yes");
+
+            if (!net.wifi_connected()) {
+                post_conn(false, "Test: WiFi down");
+                break;
+            }
+
+            // Tokenless probe: GET /api/scenes. Don't try to log in — the goal
+            // is to verify reachability + auth path, not to fetch data.
+            HTTPClient http;
+            http.begin(url + "/api/scenes");
+            http.setConnectTimeout(HTTP_TIMEOUT_MS);
+            http.setTimeout(HTTP_TIMEOUT_MS);
+            int code = http.GET();
+            http.end();
+
+            if (code == 200) {
+                post_conn(true, "Test: OK (200)");
+            } else if (code == 401 || code == 403) {
+                post_conn(false, "Test: 401/403 — wrong credentials");
+            } else if (code == 404) {
+                post_conn(false, "Test: 404 — URL path wrong");
+            } else if (code > 0) {
+                post_conn(false, ("Test: HTTP " + String(code)).c_str());
+            } else {
+                post_conn(false, "Test: unreachable (timeout/DNS)");
+            }
+            break;
+        }
+
         case REQ_FETCH_SCENES:
             do_fetch_scenes();
             break;
@@ -283,5 +335,18 @@ Request req_flag(ReqType t, bool flag) {
     Request r{};
     r.type = t;
     r.flag = flag;
+    return r;
+}
+
+Request req_test_connection(const String &url, const String &user, const String &pass) {
+    Request r{};
+    r.type = REQ_TEST_CONNECTION;
+    StaticJsonDocument<256> doc;
+    doc["url"] = url;
+    if (user.length()) doc["user"] = user;
+    if (pass.length()) doc["password"] = pass;
+    String body;
+    serializeJson(doc, body);
+    strncpy(r.payload, body.c_str(), sizeof(r.payload) - 1);
     return r;
 }
