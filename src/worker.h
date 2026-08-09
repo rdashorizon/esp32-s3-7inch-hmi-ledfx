@@ -51,6 +51,7 @@ struct Result {
     int     count;
     bool    connected;   // for RES_CONN
     char    msg[64];
+    GlobalsState globals;  // valid only on RES_VIRTUALS
 };
 
 // Create the queues + task. Call once in setup(), after g_config is loaded and

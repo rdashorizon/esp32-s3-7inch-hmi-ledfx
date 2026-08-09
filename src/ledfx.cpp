@@ -63,7 +63,7 @@ int LedFxClient::fetch_scenes(SceneInfo *&out, int &count) {
     return 200;
 }
 
-int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count) {
+int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count, GlobalsState *globals) {
     out = nullptr;
     count = 0;
     String body;
@@ -72,6 +72,11 @@ int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count) {
 
     SpiRamJsonDocument doc(16384);
     if (deserializeJson(doc, body) != DeserializationError::Ok) return 500;
+
+    if (globals) {
+        globals->valid  = true;
+        globals->paused = doc["paused"] | false;  // top-level global pause state
+    }
 
     JsonObject virtuals = doc["virtuals"];
     if (virtuals.isNull()) return 200;
@@ -94,6 +99,17 @@ int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count) {
         if (!eff.isNull()) {
             out[i].effect_type = eff["type"] | "";
             out[i].effect_name = eff["name"] | "";
+            // Take brightness/mirror/flip from the first active effect as the
+            // representative global values (apply_global keeps them in sync).
+            if (globals && !globals->has_effect && (kv.value()["active"] | false)) {
+                JsonObject ec = eff["config"];
+                if (!ec.isNull()) {
+                    globals->brightness = (int)(((float)(ec["brightness"] | 1.0f)) * 100.0f + 0.5f);
+                    globals->mirror     = ec["mirror"] | false;
+                    globals->flip       = ec["flip"] | false;
+                    globals->has_effect = true;
+                }
+            }
         }
         i++;
     }

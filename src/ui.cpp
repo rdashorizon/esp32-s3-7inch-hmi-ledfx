@@ -227,6 +227,10 @@ static void render_virt_list(void) {
 // ---- Global screen ---------------------------------------------------------
 static lv_obj_t *s_bright_slider;
 static lv_obj_t *s_bright_value;
+// Global-screen controls that get synced from server state on refresh.
+static lv_obj_t *s_mirror_sw = nullptr;
+static lv_obj_t *s_flip_sw   = nullptr;
+static lv_obj_t *s_pause_sw  = nullptr;
 
 static void bright_slider_cb(lv_event_t *e) {
     lv_obj_t *slider = lv_event_get_target(e);
@@ -299,6 +303,25 @@ static void update_conn_indicator(void) {
         s_link_ok ? lv_color_hex(0x33cc66) : lv_color_hex(0xd8a11a), 0);
 }
 
+// Reflect server global state onto the Global-screen controls. Programmatic
+// state/value changes do not fire LV_EVENT_VALUE_CHANGED, so this can't loop
+// back into the command handlers.
+static void set_sw(lv_obj_t *sw, bool on) {
+    if (!sw) return;
+    if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    else    lv_obj_clear_state(sw, LV_STATE_CHECKED);
+}
+static void apply_globals_to_ui(const GlobalsState &g) {
+    if (!g.valid) return;
+    set_sw(s_pause_sw, g.paused);
+    if (g.has_effect) {
+        if (s_bright_slider) lv_slider_set_value(s_bright_slider, g.brightness, LV_ANIM_OFF);
+        if (s_bright_value)  lv_label_set_text_fmt(s_bright_value, "%d%%", g.brightness);
+        set_sw(s_mirror_sw, g.mirror);
+        set_sw(s_flip_sw, g.flip);
+    }
+}
+
 // Enqueue a refresh for whichever data screen is currently in front.
 static void request_active_screen(void) {
     uint32_t idx = lv_tabview_get_tab_act(s_tabview);
@@ -345,6 +368,7 @@ static void result_pump_cb(lv_timer_t *t) {
                 if (r.status == 200) {
                     obj_show(s_virt_error, false);
                     render_virt_list();
+                    apply_globals_to_ui(r.globals);  // sync Global-screen controls
                 } else {
                     lv_obj_clean(s_virt_list);
                     if (s_virt_error)
@@ -455,8 +479,8 @@ static void build_global_screen(void) {
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_t *ml = lv_label_create(mrow);
     lv_label_set_text(ml, "Mirror");
-    lv_obj_t *ms = lv_switch_create(mrow);
-    lv_obj_add_event_cb(ms, mirror_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_mirror_sw = lv_switch_create(mrow);
+    lv_obj_add_event_cb(s_mirror_sw, mirror_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t *frow = lv_obj_create(s_tab_global);
     lv_obj_set_size(frow, LV_PCT(100), 60);
@@ -465,8 +489,8 @@ static void build_global_screen(void) {
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_t *fl = lv_label_create(frow);
     lv_label_set_text(fl, "Flip");
-    lv_obj_t *fs = lv_switch_create(frow);
-    lv_obj_add_event_cb(fs, flip_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_flip_sw = lv_switch_create(frow);
+    lv_obj_add_event_cb(s_flip_sw, flip_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     // Screen backlight (this panel, not the LEDs) — live, no Apply needed.
     lv_obj_t *brow = lv_obj_create(s_tab_global);
@@ -521,7 +545,7 @@ static void tab_changed_cb(lv_event_t *e) {
     uint32_t idx = lv_tabview_get_tab_act(btns);
     if (idx == 0) request_scenes();
     if (idx == 1) request_virtuals();
-    if (idx == 2) update_global_status();
+    if (idx == 2) { request_virtuals(); update_global_status(); }  // refresh globals
 }
 
 // ---- Init ------------------------------------------------------------------
@@ -590,8 +614,8 @@ void ui_init(void) {
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_t *pl = lv_label_create(pause_wrap);
     lv_label_set_text(pl, "Pause all");
-    lv_obj_t *psw = lv_switch_create(pause_wrap);
-    lv_obj_add_event_cb(psw, pause_all_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_pause_sw = lv_switch_create(pause_wrap);
+    lv_obj_add_event_cb(s_pause_sw, pause_all_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     build_global_screen();
 
@@ -605,8 +629,10 @@ void ui_init(void) {
 
     // Drain worker results (and repaint) on the LVGL thread.
     lv_timer_create(result_pump_cb, RESULT_PUMP_MS, NULL);
-    // Kick off the first scene fetch (the worker connects on demand).
+    // Kick off the first fetches (the worker connects on demand). Virtuals also
+    // carries the global state that seeds the Global-screen controls.
     request_scenes();
+    request_virtuals();
     // Keep the front data screen (and the status row) in sync with LedFx.
     lv_timer_create(auto_refresh_cb, AUTO_REFRESH_MS, NULL);
     // Auto-dim the panel after a period of no touch.

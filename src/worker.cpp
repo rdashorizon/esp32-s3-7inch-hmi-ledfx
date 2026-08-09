@@ -97,9 +97,18 @@ static void do_fetch_scenes() {
 static void do_fetch_virtuals() {
     VirtualInfo *arr = nullptr;
     int n = 0;
-    int code = g_ledfx.fetch_virtuals(arr, n);
+    GlobalsState g;
+    int code = g_ledfx.fetch_virtuals(arr, n, &g);
     Serial.printf("[net] GET /api/virtuals -> HTTP %d, %d virtuals\n", code, n);
-    post_data(RES_VIRTUALS, code, arr, n, "Failed to fetch virtuals");
+    // Post the list plus the global state (pause/brightness/mirror/flip).
+    Result r{};
+    r.type = RES_VIRTUALS;
+    r.status = code;
+    r.data = arr;
+    r.count = n;
+    r.globals = g;
+    if (code != 200) strncpy(r.msg, "Failed to fetch virtuals", sizeof(r.msg) - 1);
+    if (xQueueSend(s_res_q, &r, 0) != pdTRUE) delete[] arr;  // avoid leak if full
 }
 
 // ---- Request handling ------------------------------------------------------

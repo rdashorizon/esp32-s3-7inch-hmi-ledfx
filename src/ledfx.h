@@ -22,6 +22,18 @@ struct VirtualInfo {
     bool   streaming = false;
 };
 
+// Server-side global state, derived from GET /api/virtuals. `paused` is the
+// top-level field; brightness/mirror/flip are read from the first active
+// effect's config (apply_global keeps these in sync across active effects).
+struct GlobalsState {
+    bool valid      = false;  // the response parsed
+    bool paused     = false;
+    bool has_effect = false;  // an active effect supplied brightness/mirror/flip
+    int  brightness = 100;    // 0..100 (%)
+    bool mirror     = false;
+    bool flip       = false;
+};
+
 class LedFxClient {
 public:
     LedFxClient() = default;
@@ -31,7 +43,8 @@ public:
 
     // Returns 0 on success, HTTP status on failure.
     int fetch_scenes(SceneInfo *&out, int &count);
-    int fetch_virtuals(VirtualInfo *&out, int &count);
+    // When `globals` is provided, it is also filled from the same response.
+    int fetch_virtuals(VirtualInfo *&out, int &count, GlobalsState *globals = nullptr);
 
     int activate_scene(const String &id);
     int deactivate_scene(const String &id);
