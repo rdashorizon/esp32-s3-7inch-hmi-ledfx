@@ -787,6 +787,10 @@ void ui_init(void) {
     lv_obj_t *stitle = lv_label_create(splash);
     lv_label_set_text(stitle, LV_SYMBOL_HOME "  LedFx HMI");
     lv_obj_center(stitle);
+    // repeat_count=1 makes LVGL auto-delete this timer after the splash overlay
+    // is removed (lv_timer_t::one_shot-style cleanup). Don't change it without
+    // also handling timer cleanup explicitly — a forever-loop timer with
+    // user_data pointing at a deleted splash object would crash on the next tick.
     lv_timer_t *st = lv_timer_create(splash_done_cb, 1200, splash);
     lv_timer_set_repeat_count(st, 1);
 }
