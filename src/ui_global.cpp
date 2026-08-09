@@ -291,7 +291,7 @@ void ui_global_build(lv_obj_t *parent) {
     // to NVS + restyles every visible widget. The internal 200 ms debounce
     // keeps rapid taps from causing paint thrash.
     s_theme_box = lv_obj_create(parent);
-    lv_obj_set_size(s_theme_box, LV_PCT(100), 130);
+    lv_obj_set_size(s_theme_box, LV_PCT(100), 170);
     lv_obj_set_flex_flow(s_theme_box, LV_FLEX_FLOW_COLUMN);
     lv_obj_clear_flag(s_theme_box, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(s_theme_box, 8, 0);
@@ -395,6 +395,23 @@ void ui_global_build(lv_obj_t *parent) {
             }, LV_EVENT_CLICKED, NULL);
         }
     }
+
+    // Reset to defaults (Tier 2). Reverts to Dark + Blue and triggers the
+    // confirmation toast via ui_theme_set_and_apply().
+    lv_obj_t *reset_btn = lv_btn_create(s_theme_box);
+    lv_obj_set_size(reset_btn, LV_PCT(100), 36);
+    lv_obj_set_style_bg_color(reset_btn,
+        lv_color_hex(ui_theme_panel_alt()), 0);
+    lv_obj_t *reset_lbl = lv_label_create(reset_btn);
+    lv_label_set_text(reset_lbl, "Defaults");
+    lv_obj_center(reset_lbl);
+    lv_obj_add_event_cb(reset_btn, [](lv_event_t *e) {
+        (void)e;
+        Theme t;
+        t.mode = ThemeMode::DARK;
+        t.accent = AccentColor::BLUE;
+        ui_theme_set_and_apply(t);
+    }, LV_EVENT_CLICKED, NULL);
 
     // Connection / status row
     s_gstatus_label = lv_label_create(parent);

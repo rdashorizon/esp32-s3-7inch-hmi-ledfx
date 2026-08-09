@@ -113,6 +113,14 @@ void ui_theme_set_and_apply(const Theme &t) {
     s_last_apply_ms = now;
     config_save_theme(s_theme);
     ui_theme_apply();
+    // Visual confirmation: paint the bottom status label with the new
+    // theme summary so the user has an explicit "yes, that saved" signal
+    // beyond the live repaint.
+    char msg[48];
+    snprintf(msg, sizeof(msg), "Theme: %s, %s",
+        s_theme.mode == ThemeMode::DARK ? "Dark" : "Light",
+        ui_theme_accent_name());
+    ui_show_status(msg, false);
 }
 
 void ui_theme_apply() {
