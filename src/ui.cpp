@@ -103,6 +103,14 @@ static void result_pump_cb(lv_timer_t *t) {
                 break;
             case RES_ACTION:
                 ui_show_status(r.msg, r.status != 200);
+                // If the Color tab is in front and the user just sent a
+                // color apply from it, surface the result on the tab itself
+                // (transient banner) — the bottom status bar is easy to miss
+                // while the user's eyes are on the colorwheel.
+                // Tab index 2 = Color (see ui_init(): Scenes/Virtuals/Color/Global).
+                if (lv_tabview_get_tab_act(s_tabview) == 2) {
+                    ui_color_pump_result(r.status, r.msg);
+                }
                 break;
             case RES_CONN:
                 ui_show_status(r.msg, !r.connected);

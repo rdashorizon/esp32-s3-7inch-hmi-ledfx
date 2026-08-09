@@ -25,7 +25,12 @@ static lv_obj_t *s_slider_r, *s_slider_g, *s_slider_b;
 static lv_obj_t *s_label_r, *s_label_g, *s_label_b;
 static lv_obj_t *s_swatch;
 static lv_obj_t *s_apply_btn;
-static lv_obj_t *s_banner = nullptr;  // hidden by default; shown by pump_result
+static lv_obj_t *s_black_btn;
+// Transient error banner (Tier 2.1). Hidden by default; shown by
+// pump_result on a non-200 apply, auto-hidden after BANNER_TIMEOUT_MS.
+static lv_obj_t *s_banner = nullptr;
+static lv_timer_t *s_banner_timer = nullptr;
+static const uint32_t BANNER_TIMEOUT_MS = 3000;
 
 // Current color in 0..255 per channel. Defaults are read from NVS on build
 // so the device restores the user's last pick; if no pick has been saved,
@@ -91,6 +96,25 @@ static void maybe_live_apply(void) {
     ui_color_apply_now();
 }
 
+// ---- Banner (Tier 2.1) -----------------------------------------------------
+static void banner_hide_cb(lv_timer_t *t) {
+    (void)t;
+    if (s_banner) lv_obj_add_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
+    if (s_banner_timer) {
+        lv_timer_del(s_banner_timer);
+        s_banner_timer = nullptr;
+    }
+}
+
+static void banner_show(const char *msg) {
+    if (!s_banner) return;
+    lv_label_set_text(s_banner, msg);
+    lv_obj_clear_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
+    if (s_banner_timer) lv_timer_del(s_banner_timer);
+    s_banner_timer = lv_timer_create(banner_hide_cb, BANNER_TIMEOUT_MS, NULL);
+    lv_timer_set_repeat_count(s_banner_timer, 1);
+}
+
 // ---- Public API ------------------------------------------------------------
 void ui_color_apply_now(void) {
     StaticJsonDocument<128> doc;
@@ -108,11 +132,22 @@ void ui_color_apply_now(void) {
 }
 
 void ui_color_pump_result(int status, const char *msg) {
-    // Tier 2.1 will surface this as a transient banner on the tab. For now
-    // we just log — the bottom status label (painted by the result pump in
-    // ui.cpp on RES_ACTION) already shows success/failure to the user.
-    (void)status;
-    (void)msg;
+    // On a non-200 apply, surface the failure on the Color tab itself —
+    // the bottom status label is easy to miss while the user is staring at
+    // the wheel. msg is the action result ("Scene activated", "Gradient set",
+    // etc) — for our purposes we just need to know it failed.
+    if (status != 200 && msg && msg[0]) {
+        char banner[96];
+        snprintf(banner, sizeof(banner), LV_SYMBOL_WARNING "  Apply failed: %s", msg);
+        banner_show(banner);
+    } else if (s_banner) {
+        // Success — dismiss any prior error banner immediately.
+        lv_obj_add_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
+        if (s_banner_timer) {
+            lv_timer_del(s_banner_timer);
+            s_banner_timer = nullptr;
+        }
+    }
 }
 
 // ---- Build -----------------------------------------------------------------
@@ -170,14 +205,53 @@ void ui_color_build(lv_obj_t *parent) {
     lv_obj_set_style_radius(s_swatch, 4, 0);
     apply_preview_color();
 
-    // ---- Apply button row ----
-    // Tier 2.2 adds the Black button next to Apply.
-    s_apply_btn = lv_btn_create(parent);
+    // ---- Error banner (Tier 2.1) ----
+    // Hidden by default; surfaces apply failures briefly so the user notices
+    // without the bottom status bar stealing focus from the wheel.
+    s_banner = lv_label_create(parent);
+    lv_obj_set_width(s_banner, LV_PCT(100));
+    lv_obj_set_style_text_color(s_banner, lv_color_hex(0xff8888), 0);
+    lv_obj_set_style_bg_color(s_banner, lv_color_hex(0x331111), 0);
+    lv_obj_set_style_bg_opa(s_banner, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(s_banner, 8, 0);
+    lv_obj_set_style_radius(s_banner, 4, 0);
+    lv_label_set_text(s_banner, "");
+    lv_obj_add_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
+
+    // ---- Apply + Black buttons (Tier 2.2) ----
+    lv_obj_t *btnrow = lv_obj_create(parent);
+    lv_obj_set_size(btnrow, LV_PCT(100), 60);
+    lv_obj_set_flex_flow(btnrow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btnrow, LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    s_apply_btn = lv_btn_create(btnrow);
     lv_obj_set_style_bg_color(s_apply_btn, lv_color_hex(0x2266cc), 0);
+    lv_obj_set_size(s_apply_btn, 200, 50);
     lv_obj_t *al = lv_label_create(s_apply_btn);
     lv_label_set_text(al, LV_SYMBOL_OK "  Apply");
     lv_obj_center(al);
     lv_obj_add_event_cb(s_apply_btn,
         [](lv_event_t *e) { (void)e; ui_color_apply_now(); },
+        LV_EVENT_CLICKED, NULL);
+
+    // Black button: closest thing to "off" — see Risks in the plan. Sends
+    // background_color="#000000" which LedFx treats as a known dark state.
+    s_black_btn = lv_btn_create(btnrow);
+    lv_obj_set_style_bg_color(s_black_btn, lv_color_hex(0x222222), 0);
+    lv_obj_set_size(s_black_btn, 200, 50);
+    lv_obj_t *bl = lv_label_create(s_black_btn);
+    lv_label_set_text(bl, LV_SYMBOL_POWER "  Black");
+    lv_obj_center(bl);
+    lv_obj_add_event_cb(s_black_btn,
+        [](lv_event_t *e) {
+            (void)e;
+            s_r = s_g = s_b = 0;
+            if (s_slider_r) lv_slider_set_value(s_slider_r, 0, LV_ANIM_OFF);
+            if (s_slider_g) lv_slider_set_value(s_slider_g, 0, LV_ANIM_OFF);
+            if (s_slider_b) lv_slider_set_value(s_slider_b, 0, LV_ANIM_OFF);
+            apply_preview_color();
+            ui_color_apply_now();
+        },
         LV_EVENT_CLICKED, NULL);
 }
