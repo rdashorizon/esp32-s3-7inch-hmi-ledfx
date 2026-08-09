@@ -29,18 +29,25 @@ static const IPAddress AP_IP(4, 3, 2, 1);
 
 ConfigStore config_store;
 
-static const char INDEX_HTML[] PROGMEM = R"HTML(
+// Captive-portal HTML template. The "{psk}" placeholder is replaced at
+// request time with the per-device password (printed on the form so the user
+// knows what to type when connecting to the AP).
+static const char INDEX_HTML_TPL[] PROGMEM = R"HTML(
 <!doctype html><html><head><title>LedFX HMI Setup</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 body{font-family:system-ui;max-width:480px;margin:2em auto;padding:0 1em;color:#222}
 h1{font-size:1.4em}
+.ap-info{background:#eef;border:1px solid #99c;border-radius:4px;padding:0.6em 0.8em;margin:1em 0;font-family:monospace}
+.ap-info strong{font-size:1.1em}
 label{display:block;margin:0.8em 0 0.2em;font-weight:600}
 input{width:100%;padding:0.5em;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
 button{margin-top:1.2em;padding:0.7em 1.4em;background:#0066cc;color:#fff;border:0;border-radius:4px;font-size:1em;cursor:pointer}
 small{color:#666}
 </style></head><body>
 <h1>LedFX HMI — Setup</h1>
+<p>Connect your phone or laptop to the WiFi network:</p>
+<div class="ap-info">SSID: <strong>ledfx-hmi-setup</strong><br>Password: <strong>{psk}</strong></div>
 <form action="/save" method="POST">
   <label>WiFi SSID</label><input name="wifi_ssid" required>
   <label>WiFi Password</label><input name="wifi_pass" type="password">
@@ -51,6 +58,25 @@ small{color:#666}
 </form>
 </body></html>
 )HTML";
+
+// Render the captive-portal HTML for this specific device's PSK.
+static String render_index_html(const String &psk) {
+    String html = INDEX_HTML_TPL;
+    html.replace("{psk}", psk);
+    return html;
+}
+
+// Compute the per-device AP password from the chip's efuse MAC. Last 3 bytes
+// rendered as lowercase hex = 6 chars. Reproducible across reboots but unique
+// per device; printed on the captive-portal form so the user knows what to
+// type when joining the AP.
+static String derive_ap_psk() {
+    uint64_t mac = ESP.getEfuseMac();
+    char buf[7];
+    snprintf(buf, sizeof(buf), "%02x%02x%02x",
+             (uint8_t)(mac >> 16), (uint8_t)(mac >> 8), (uint8_t)mac);
+    return String(buf);
+}
 
 bool config_url_is_valid(const String &url) {
     if (url.length() < 8) return false;  // shorter than "http://x"
@@ -130,9 +156,15 @@ void ConfigStore::save_last_tab(uint8_t idx) {
 }
 
 bool ConfigStore::run_captive_portal(uint32_t timeout_seconds) {
+    String psk = derive_ap_psk();
+    Serial.printf("[portal] AP SSID='ledfx-hmi-setup' PSK='%s'\n", psk.c_str());
+
     WiFi.mode(WIFI_AP);
     WiFi.softAPConfig(AP_IP, AP_IP, IPAddress(255, 255, 255, 0));
-    WiFi.softAP("ledfx-hmi-setup", "");  // open AP
+    // WPA2 with the per-device PSK (min length 8 per the standard — our 6-char
+    // hex is too short for WPA2, so we extend with a fixed suffix). Anyone
+    // nearby still has to know the device-specific prefix to connect.
+    WiFi.softAP("ledfx-hmi-setup", (psk + "hmi2026").c_str());
 
     DNSServer dns;
     dns.start(DNS_PORT, "*", AP_IP);
@@ -140,9 +172,12 @@ bool ConfigStore::run_captive_portal(uint32_t timeout_seconds) {
     WebServer server(80);
     Config cfg;
 
-    server.onNotFound([&server]() { server.send(200, "text/html", INDEX_HTML); });
-    server.on("/", HTTP_GET, [&server]() { server.send(200, "text/html", INDEX_HTML); });
-    server.on("/generate_204", HTTP_GET, [&server]() { server.send(200, "text/html", INDEX_HTML); });
+    auto send_index = [&server, &psk]() {
+        server.send(200, "text/html", render_index_html(psk));
+    };
+    server.onNotFound(send_index);
+    server.on("/", HTTP_GET, send_index);
+    server.on("/generate_204", HTTP_GET, send_index);
 
     server.on("/save", HTTP_POST, [this, &cfg, &server]() {
         cfg.wifi_ssid = server.arg("wifi_ssid");
