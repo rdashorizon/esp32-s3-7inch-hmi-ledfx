@@ -102,3 +102,32 @@ LVGL 800×480 RGB565 single-buffer = 768 KB → PSRAM. Draw buffers = two
 - `pio run` succeeds
 - Hand-test loop: flash → captive portal → connect → list scenes → toggle
 - 30-min burn-in on the scene screen with auto-refresh
+
+## 10. As-built notes (corrections to the plan above)
+
+Verified against real hardware and the LedFx source; a few assumptions in
+sections 5–8 turned out wrong:
+
+- **Auth is optional, not bearer-token by default.** Mainline LedFx has no
+  `POST /api/auth/login`. The controller connects on WiFi alone and only
+  attempts login when credentials are provided; a real 401/403 triggers one
+  re-auth + retry.
+- **Global brightness = `PUT /api/config {"global_brightness": …}`** (and `GET`
+  to read it). The effect-config `brightness` is a separate multiplier; the
+  master brightness the LedFx UI drives is `global_brightness`.
+- **Gradient / mirror / flip = `PUT /api/effects {"action":"apply_global", …}`**
+  (real endpoint; see LedFx `docs/apis/global.md`). Gradients must use LedFx's
+  built-in keys (Rainbow, Ocean, Viridis, …). These bulk actions return HTTP 200
+  even on failure with `{"status":"failed"}`, so the client parses that.
+- **Global pause = top-level `paused` in `GET /api/virtuals`**; the Global
+  controls seed from live server state on load.
+- **Networking is dual-core async** (FreeRTOS worker on core 0 + request/result
+  queues), so the UI never blocks on the network; WiFi auto-reconnects.
+- **No BOOT-button reset** — GPIO0 is the LCD pixel clock. Setup is re-entered
+  via on-screen **Global → Settings** (edit in place) or **Reset** (wipe +
+  portal). Panel brightness has an on-device slider + auto-dim and persists.
+
+## 11. Out of scope — still open (Tier 4 candidates)
+
+mDNS auto-discovery of the LedFx server, live WebSocket state (vs polling), OTA
+updates, and MQTT / Home Assistant integration.
