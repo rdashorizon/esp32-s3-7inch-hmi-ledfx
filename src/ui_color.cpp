@@ -15,6 +15,7 @@
 #include "ui.h"            // ui_submit, ui_show_status
 #include "worker.h"        // req_payload, REQ_APPLY_GLOBAL
 #include "config.h"        // LedColor, load/save_last_color (Tier 1.5)
+#include "ui_theme.h"      // ui_theme_*() palette accessors (Tier 1.3)
 #include <Arduino.h>       // millis
 #include <ArduinoJson.h>   // StaticJsonDocument (Tier 1.4)
 #include <stdarg.h>        // va_list (banner; Tier 2)
@@ -201,7 +202,8 @@ void ui_color_build(lv_obj_t *parent) {
     s_swatch = lv_obj_create(parent);
     lv_obj_set_size(s_swatch, LV_PCT(100), 60);
     lv_obj_set_style_border_width(s_swatch, 1, 0);
-    lv_obj_set_style_border_color(s_swatch, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_border_color(s_swatch,
+        lv_color_hex(ui_theme_border()), 0);
     lv_obj_set_style_radius(s_swatch, 4, 0);
     apply_preview_color();
 
@@ -210,8 +212,10 @@ void ui_color_build(lv_obj_t *parent) {
     // without the bottom status bar stealing focus from the wheel.
     s_banner = lv_label_create(parent);
     lv_obj_set_width(s_banner, LV_PCT(100));
-    lv_obj_set_style_text_color(s_banner, lv_color_hex(0xff8888), 0);
-    lv_obj_set_style_bg_color(s_banner, lv_color_hex(0x331111), 0);
+    lv_obj_set_style_text_color(s_banner,
+        lv_color_hex(ui_theme_text_warn()), 0);
+    lv_obj_set_style_bg_color(s_banner,
+        lv_color_hex(ui_theme_panel_alt()), 0);
     lv_obj_set_style_bg_opa(s_banner, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(s_banner, 8, 0);
     lv_obj_set_style_radius(s_banner, 4, 0);
@@ -226,7 +230,8 @@ void ui_color_build(lv_obj_t *parent) {
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     s_apply_btn = lv_btn_create(btnrow);
-    lv_obj_set_style_bg_color(s_apply_btn, lv_color_hex(0x2266cc), 0);
+    lv_obj_set_style_bg_color(s_apply_btn,
+        lv_color_hex(ui_theme_accent_rgb565()), 0);
     lv_obj_set_size(s_apply_btn, 200, 50);
     lv_obj_t *al = lv_label_create(s_apply_btn);
     lv_label_set_text(al, LV_SYMBOL_OK "  Apply");
@@ -238,7 +243,8 @@ void ui_color_build(lv_obj_t *parent) {
     // Black button: closest thing to "off" — see Risks in the plan. Sends
     // background_color="#000000" which LedFx treats as a known dark state.
     s_black_btn = lv_btn_create(btnrow);
-    lv_obj_set_style_bg_color(s_black_btn, lv_color_hex(0x222222), 0);
+    lv_obj_set_style_bg_color(s_black_btn,
+        lv_color_hex(ui_theme_panel_alt()), 0);
     lv_obj_set_size(s_black_btn, 200, 50);
     lv_obj_t *bl = lv_label_create(s_black_btn);
     lv_label_set_text(bl, LV_SYMBOL_POWER "  Black");
@@ -254,4 +260,30 @@ void ui_color_build(lv_obj_t *parent) {
             ui_color_apply_now();
         },
         LV_EVENT_CLICKED, NULL);
+}
+
+// ---- Theme support (Tier 1.3) -------------------------------------------
+void ui_color_apply_theme(void) {
+    if (s_swatch) {
+        lv_obj_set_style_border_color(s_swatch,
+            lv_color_hex(ui_theme_border()), 0);
+    }
+    if (s_banner) {
+        lv_obj_set_style_text_color(s_banner,
+            lv_color_hex(ui_theme_text_warn()), 0);
+        lv_obj_set_style_bg_color(s_banner,
+            lv_color_hex(ui_theme_panel_alt()), 0);
+    }
+    if (s_apply_btn) {
+        lv_obj_set_style_bg_color(s_apply_btn,
+            lv_color_hex(ui_theme_accent_rgb565()), 0);
+    }
+    if (s_black_btn) {
+        lv_obj_set_style_bg_color(s_black_btn,
+            lv_color_hex(ui_theme_panel_alt()), 0);
+    }
+}
+
+namespace ui_color {
+    void apply_theme() { ui_color_apply_theme(); }
 }

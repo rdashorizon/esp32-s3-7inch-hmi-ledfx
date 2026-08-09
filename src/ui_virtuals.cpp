@@ -9,6 +9,7 @@
 #include "worker.h"     // worker_submit, req_*, REQ_*
 #include "ui_global.h"  // ui_global_mark_refreshed, ui_global_apply_state_with_pause
 #include "ui_virtuals_color.h"  // per-virtual color modal (Tier 1 split-out)
+#include "ui_theme.h"   // ui_theme_*() palette accessors (Tier 1.3)
 #include <Arduino.h>    // millis
 
 // ---- Module state (LVGL-thread-only) --------------------------------------
@@ -133,8 +134,12 @@ static void render_virt_list(void) {
         // Tier 2.1: briefly highlight the most recently color-set row.
         // The flash-window check is encapsulated in ui_virtuals_color.
         if (ui_virtuals_color_row_is_recent(i)) {
+            // Highlight color: accent green by default; could shift to a
+            // brighter variant per-mode. Using accent RGB keeps the
+            // confirmation flash visually tied to the user's theme choice.
             lv_obj_set_style_border_width(row, 2, 0);
-            lv_obj_set_style_border_color(row, lv_color_hex(0x44cc66), 0);
+            lv_obj_set_style_border_color(row,
+                lv_color_hex(ui_theme_accent_rgb565()), 0);
             lv_obj_set_style_radius(row, 4, 0);
         }
 
@@ -159,7 +164,8 @@ static void render_virt_list(void) {
         lv_obj_set_style_bg_color(swatch,
             lv_color_hex(gradient_to_color(s_virt[i].gradient)), 0);
         lv_obj_set_style_border_width(swatch, 1, 0);
-        lv_obj_set_style_border_color(swatch, lv_color_hex(0x444444), 0);
+        lv_obj_set_style_border_color(swatch,
+            lv_color_hex(ui_theme_border()), 0);
         lv_obj_set_style_radius(swatch, 2, 0);
         lv_obj_set_user_data(swatch, (void *)(intptr_t)i);
         lv_obj_add_event_cb(swatch, swatch_clicked, LV_EVENT_CLICKED, NULL);
@@ -197,8 +203,11 @@ void ui_virtuals_build(lv_obj_t *parent) {
     lv_obj_set_size(s_virt_spinner, 56, 56);
     lv_obj_center(s_virt_spinner);
     lv_obj_add_flag(s_virt_spinner, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_arc_color(s_virt_spinner,
+        lv_color_hex(ui_theme_accent_rgb565()), LV_PART_INDICATOR);
     s_virt_error = lv_label_create(parent);
-    lv_obj_set_style_text_color(s_virt_error, lv_color_hex(0xff6666), 0);
+    lv_obj_set_style_text_color(s_virt_error,
+        lv_color_hex(ui_theme_text_error()), 0);
     lv_obj_center(s_virt_error);
     lv_obj_add_flag(s_virt_error, LV_OBJ_FLAG_HIDDEN);
 
@@ -207,8 +216,10 @@ void ui_virtuals_build(lv_obj_t *parent) {
     s_banner = lv_label_create(parent);
     lv_obj_set_width(s_banner, LV_PCT(100) - 32);
     lv_obj_align(s_banner, LV_ALIGN_BOTTOM_MID, 0, -76);  // above the toolbar
-    lv_obj_set_style_text_color(s_banner, lv_color_hex(0xff8888), 0);
-    lv_obj_set_style_bg_color(s_banner, lv_color_hex(0x331111), 0);
+    lv_obj_set_style_text_color(s_banner,
+        lv_color_hex(ui_theme_text_warn()), 0);
+    lv_obj_set_style_bg_color(s_banner,
+        lv_color_hex(ui_theme_panel_alt()), 0);
     lv_obj_set_style_bg_opa(s_banner, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(s_banner, 8, 0);
     lv_obj_set_style_radius(s_banner, 4, 0);
@@ -297,4 +308,29 @@ void ui_virtuals_pump_result(int status, int count, VirtualInfo *data,
         obj_show(s_virt_error, true);
         ui_show_status(err && err[0] ? err : "Failed to fetch virtuals", true);
     }
+}
+
+// ---- Theme support (Tier 1.3) -------------------------------------------
+void ui_virtuals_apply_theme(void) {
+    if (s_virt_spinner) {
+        lv_obj_set_style_arc_color(s_virt_spinner,
+            lv_color_hex(ui_theme_accent_rgb565()), LV_PART_INDICATOR);
+    }
+    if (s_virt_error) {
+        lv_obj_set_style_text_color(s_virt_error,
+            lv_color_hex(ui_theme_text_error()), 0);
+    }
+    if (s_banner) {
+        lv_obj_set_style_text_color(s_banner,
+            lv_color_hex(ui_theme_text_warn()), 0);
+        lv_obj_set_style_bg_color(s_banner,
+            lv_color_hex(ui_theme_panel_alt()), 0);
+    }
+    // Row swatches + flash colors are computed at row-build time via the
+    // theme accessors — invalidating the list re-runs render_virt_list().
+    if (s_virt_list) lv_obj_invalidate(s_virt_list);
+}
+
+namespace ui_virtuals {
+    void apply_theme() { ui_virtuals_apply_theme(); }
 }

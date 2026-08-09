@@ -33,3 +33,10 @@ void ui_virtuals_pump_result(int status, int count, VirtualInfo *data,
 // user notices a color-set or toggle failure without checking the bottom
 // status label.
 void ui_virtuals_pump_action_result(int status, const char *msg);
+
+// Theme support: re-color the persistent widgets (spinner, error banner,
+// in-tab action banner) and invalidate the virtual list so the next render
+// uses the current theme colors.
+void ui_virtuals_apply_theme(void);
+
+namespace ui_virtuals { void apply_theme(); }

@@ -8,6 +8,7 @@
 #include "ui.h"        // ui_show_status, ui_submit (for the overlay), ui_global_mark_refreshed
 #include "worker.h"    // worker_submit, REQ_*
 #include "ui_global.h" // ui_global_mark_refreshed
+#include "ui_theme.h"  // ui_theme_*() palette accessors (Tier 1.3)
 #include <Arduino.h>   // millis
 
 // ---- Module state (LVGL-thread-only) --------------------------------------
@@ -76,8 +77,13 @@ static void render_scene_grid(void) {
         lv_obj_center(lbl);
 
         if (s_scenes[i].active) {
-            lv_obj_set_style_bg_color(btn, lv_color_hex(0x2266cc), 0);
-            lv_obj_set_style_border_color(btn, lv_color_hex(0x8ab4ff), 0);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(ui_theme_accent_rgb565()), 0);
+            // Active border: a brighter variant of the accent so the
+            // highlight reads as "thicker" than the surrounding row. In
+            // Dark mode the border is the same accent color (the button is
+            // already saturated); in Light mode the border stays the same
+            // color so it reads against the light background.
+            lv_obj_set_style_border_color(btn, lv_color_hex(ui_theme_accent_rgb565()), 0);
             lv_obj_set_style_border_width(btn, 2, 0);
         }
     }
@@ -96,8 +102,13 @@ void ui_scenes_build(lv_obj_t *parent) {
     lv_obj_set_size(s_scene_spinner, 56, 56);
     lv_obj_center(s_scene_spinner);
     lv_obj_add_flag(s_scene_spinner, LV_OBJ_FLAG_HIDDEN);
+    // Spinner arc uses the accent color so it reads as "the app is doing
+    // something in your chosen theme's color".
+    lv_obj_set_style_arc_color(s_scene_spinner,
+        lv_color_hex(ui_theme_accent_rgb565()), LV_PART_INDICATOR);
     s_scene_error = lv_label_create(parent);
-    lv_obj_set_style_text_color(s_scene_error, lv_color_hex(0xff6666), 0);
+    lv_obj_set_style_text_color(s_scene_error,
+        lv_color_hex(ui_theme_text_error()), 0);
     lv_obj_center(s_scene_error);
     lv_obj_add_flag(s_scene_error, LV_OBJ_FLAG_HIDDEN);
 }
@@ -126,4 +137,24 @@ void ui_scenes_pump_result(int status, int count, SceneInfo *data, const char *e
         obj_show(s_scene_error, true);
         ui_show_status(err && err[0] ? err : "Failed to fetch scenes", true);
     }
+}
+
+// ---- Theme support (Tier 1.3) -------------------------------------------
+void ui_scenes_apply_theme(void) {
+    if (s_scene_spinner) {
+        lv_obj_set_style_arc_color(s_scene_spinner,
+            lv_color_hex(ui_theme_accent_rgb565()), LV_PART_INDICATOR);
+    }
+    if (s_scene_error) {
+        lv_obj_set_style_text_color(s_scene_error,
+            lv_color_hex(ui_theme_text_error()), 0);
+    }
+    // The scene grid is rebuilt by render_scene_grid() on every fetch —
+    // invalidating the container is enough to make the next render pick up
+    // the new accent via the build-time `ui_theme_accent_rgb565()` call.
+    if (s_scene_grid) lv_obj_invalidate(s_scene_grid);
+}
+
+namespace ui_scenes {
+    void apply_theme() { ui_scenes_apply_theme(); }
 }

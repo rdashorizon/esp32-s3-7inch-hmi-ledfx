@@ -28,3 +28,9 @@ void ui_color_apply_now(void);
 // Adopt the worker's result of the most recent apply (success/failure). On
 // non-200, shows the transient error banner on the Color tab.
 void ui_color_pump_result(int status, const char *msg);
+
+// Theme support (Tier 1.3): re-color the persistent widgets (swatch border,
+// banner, Apply / Black buttons) to the current theme.
+void ui_color_apply_theme(void);
+
+namespace ui_color { void apply_theme(); }

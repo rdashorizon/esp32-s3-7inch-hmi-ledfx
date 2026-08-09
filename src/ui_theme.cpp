@@ -136,10 +136,8 @@ void ui_theme_apply() {
     }
 
     // Per-screen apply_theme() hooks (added in Tier 1.3 — the ui_scenes,
-    // ui_virtuals, ui_color namespaces don't exist yet at this tier's
-    // commit, so calling them now would link-fail).
-    //
-    // ui_scenes::apply_theme();
-    // ui_virtuals::apply_theme();
-    // ui_color::apply_theme();
+    // ui_virtuals, ui_color namespaces expose void apply_theme() functions).
+    ui_scenes::apply_theme();
+    ui_virtuals::apply_theme();
+    ui_color::apply_theme();
 }

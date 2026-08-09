@@ -26,3 +26,14 @@ void ui_scenes_request_refresh(void);
 // on the next call). status == 200 means success; non-200 paints the error
 // banner instead.
 void ui_scenes_pump_result(int status, int count, SceneInfo *data, const char *err);
+
+// Theme support: re-color the persistent widgets (spinner + error banner)
+// and invalidate the scene grid so the next render uses the current accent
+// color. The grid doesn't keep widgets between renders (lv_obj_clean in
+// render_scene_grid), so invalidation is enough — render_scene_grid() will
+// pick up the new accent on its next call.
+void ui_scenes_apply_theme(void);
+
+// Group of public hooks exposed in namespace ui_scenes for cross-module
+// dispatch from ui_theme_apply().
+namespace ui_scenes { void apply_theme(); }
