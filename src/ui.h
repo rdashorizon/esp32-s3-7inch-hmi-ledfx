@@ -15,6 +15,12 @@ void ui_show_status_fmt(bool is_error, const char *fmt, ...);  // printf-style
 void ui_refresh_scenes(void);   // re-fetch + repaint scene grid
 void ui_refresh_virtuals(void); // re-fetch + repaint virtual list
 
+// Getter for the bottom status label. Exposed as a getter (not an extern
+// global) so the underlying symbol can stay `static` in ui.cpp and we don't
+// widen the global namespace. The theme module reads this during
+// ui_theme_apply() to re-color the label.
+lv_obj_t *ui_status_label(void);
+
 // UI-side wrapper for worker_submit() that also notifies the slow-network
 // overlay. Prefer this over calling worker_submit() directly from UI code.
 bool ui_submit(const Request &req);

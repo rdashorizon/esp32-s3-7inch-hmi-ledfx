@@ -46,3 +46,9 @@ void ui_global_status_tick(void);
 // One-shot dim/install: creates the auto-dim timer and the boot splash.
 // Called from ui_init() after ui_global_build().
 void ui_global_install_overlays(void);
+
+// Getter for the top-right WiFi indicator (the only widget the Global tab
+// places on lv_layer_top outside its own tab body). Exposed as a getter
+// so the underlying `static` symbol stays file-local; the theme module
+// reads this during ui_theme_apply() to re-color the indicator.
+lv_obj_t *ui_global_conn_dot(void);

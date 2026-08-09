@@ -277,4 +277,6 @@ bool ui_submit(const Request &req) {
     return ok;
 }
 
+lv_obj_t *ui_status_label(void) { return s_status_label; }
+
 lv_obj_t *ui_root(void) { return s_root; }

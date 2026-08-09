@@ -326,6 +326,8 @@ void ui_global_status_tick(void) {
     update_global_status();
 }
 
+lv_obj_t *ui_global_conn_dot(void) { return s_conn_dot; }
+
 void ui_global_install_overlays(void) {
     install_splash();
     // Auto-dim the panel after a period of no touch.
