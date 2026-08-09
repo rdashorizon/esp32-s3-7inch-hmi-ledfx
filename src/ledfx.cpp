@@ -26,11 +26,32 @@ struct SpiRamAllocator {
 };
 using SpiRamJsonDocument = BasicJsonDocument<SpiRamAllocator>;
 
+// Smoke-test the SPIRAM backing path at first use: we route every large JSON
+// doc through MALLOC_CAP_SPIRAM, and silently falling back to internal RAM on a
+// misconfigured board would re-introduce the stack-overflow class of bug. The
+// assertion runs exactly once per boot.
+static void assert_spiram_allocator_works_once() {
+    static bool asserted = false;
+    if (asserted) return;
+    asserted = true;
+    void *p = heap_caps_malloc(64, MALLOC_CAP_SPIRAM);
+    if (!p) {
+        Serial.println("[ledfx] FATAL: heap_caps_malloc(MALLOC_CAP_SPIRAM) failed; "
+                       "PSRAM-backed JSON docs will not work.");
+        // Don't return — let the rest of the code demonstrate the failure rather
+        // than masking it. The next allocate() will return nullptr and the
+        // deserializer will return NoMemory, which the caller surfaces as 500.
+    } else {
+        heap_caps_free(p);
+    }
+}
+
 bool LedFxClient::connect(const String &user, const String &pass) {
     return net.login(_base, user, pass);
 }
 
 int LedFxClient::fetch_scenes(SceneInfo *&out, int &count) {
+    assert_spiram_allocator_works_once();
     out = nullptr;
     count = 0;
     String body;
@@ -64,6 +85,7 @@ int LedFxClient::fetch_scenes(SceneInfo *&out, int &count) {
 }
 
 int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count, GlobalsState *globals) {
+    assert_spiram_allocator_works_once();
     out = nullptr;
     count = 0;
     String body;
