@@ -5,12 +5,12 @@
 // just repaints widgets.
 // ---------------------------------------------------------------------------
 #include "ui_theme.h"
-#include "ui.h"           // ui_status_label() getter
-#include "ui_global.h"    // ui_global_conn_dot() getter
-#include "ui_scenes.h"    // ui_scenes::apply_theme()
-#include "ui_virtuals.h"  // ui_virtuals::apply_theme()
-#include "ui_color.h"      // ui_color::apply_theme()
-#include <Arduino.h>      // millis
+#include "ui.h"             // ui_status_label() getter
+#include "ui_global.h"      // ui_global_conn_dot() getter + ui_global::apply_theme()
+#include "ui_scenes.h"      // ui_scenes::apply_theme()
+#include "ui_virtuals.h"    // ui_virtuals::apply_theme()
+#include "ui_color.h"       // ui_color::apply_theme()
+#include <Arduino.h>       // millis
 
 // ---- Module-static state --------------------------------------------------
 static Theme s_theme;
@@ -140,4 +140,5 @@ void ui_theme_apply() {
     ui_scenes::apply_theme();
     ui_virtuals::apply_theme();
     ui_color::apply_theme();
+    ui_global::apply_theme();
 }

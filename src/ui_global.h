@@ -52,3 +52,10 @@ void ui_global_install_overlays(void);
 // so the underlying `static` symbol stays file-local; the theme module
 // reads this during ui_theme_apply() to re-color the indicator.
 lv_obj_t *ui_global_conn_dot(void);
+
+// Theme support (Tier 1.4): re-color the Global tab's status row + the
+// theme picker's panel/border + the "currently selected" button highlight.
+// Dispatched by ui_theme_apply() via the ui_global namespace hook.
+void ui_global_apply_theme(void);
+
+namespace ui_global { void apply_theme(); }

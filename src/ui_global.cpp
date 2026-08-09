@@ -6,9 +6,10 @@
 // ---------------------------------------------------------------------------
 #include "ui_global.h"
 #include "ui.h"           // ui_show_status, ui_submit (for the overlay)
-#include "config.h"       // g_config, config_store
+#include "config.h"       // g_config, config_store, Theme/ThemeMode/AccentColor
 #include "display.h"      // display_set_backlight
 #include "worker.h"       // worker_submit, req_*, REQ_*
+#include "ui_theme.h"     // ui_theme_*() palette accessors (Tier 1.4)
 #include <ArduinoJson.h>  // StaticJsonDocument
 #include <Arduino.h>      // millis, delay
 
@@ -25,6 +26,13 @@ static lv_obj_t *s_flip_sw   = nullptr;
 static lv_obj_t *s_gstatus_label = nullptr;
 // Persistent WiFi indicator on the top layer (always visible).
 static lv_obj_t *s_conn_dot = nullptr;
+// Theme picker widget refs (Tier 1.4). Held as static so the mode/accent
+// button lambdas can invalidate the picker rows after a tap, so the
+// "currently selected" highlight moves with the live theme.
+static lv_obj_t *s_theme_box = nullptr;
+static lv_obj_t *s_theme_mode_btn_dark = nullptr;
+static lv_obj_t *s_theme_mode_btn_light = nullptr;
+static lv_obj_t *s_theme_accent_btn[4] = {nullptr, nullptr, nullptr, nullptr};
 
 // Link state and last successful data refresh time. Written by the result pump
 // (ui.cpp) via ui_global_set_link() and ui_global_mark_refreshed(); read here.
@@ -277,6 +285,117 @@ void ui_global_build(lv_obj_t *parent) {
         "Spring\nWinter\nFrost\nSunset\nBorealis\nRust\nWinamp");
     lv_obj_add_event_cb(dd, gradient_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
+    // ---- Theme picker (Tier 1.4) -----------------------------------------
+    // Mode (Dark/Light) + Accent (Blue/Green/Orange/Magenta) presets.
+    // Live preview: each tap calls ui_theme_set_and_apply() which persists
+    // to NVS + restyles every visible widget. The internal 200 ms debounce
+    // keeps rapid taps from causing paint thrash.
+    s_theme_box = lv_obj_create(parent);
+    lv_obj_set_size(s_theme_box, LV_PCT(100), 130);
+    lv_obj_set_flex_flow(s_theme_box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(s_theme_box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_all(s_theme_box, 8, 0);
+    lv_obj_set_style_bg_color(s_theme_box,
+        lv_color_hex(ui_theme_panel_bg()), 0);
+    lv_obj_set_style_border_color(s_theme_box,
+        lv_color_hex(ui_theme_border()), 0);
+    lv_obj_set_style_border_width(s_theme_box, 1, 0);
+    lv_obj_set_style_radius(s_theme_box, 4, 0);
+
+    lv_obj_t *mode_lbl = lv_label_create(s_theme_box);
+    lv_label_set_text(mode_lbl, "Mode");
+    lv_obj_set_style_text_color(mode_lbl,
+        lv_color_hex(ui_theme_text_primary()), 0);
+
+    lv_obj_t *mode_row = lv_obj_create(s_theme_box);
+    lv_obj_set_size(mode_row, LV_PCT(100), 40);
+    lv_obj_set_flex_flow(mode_row, LV_FLEX_FLOW_ROW);
+    lv_obj_clear_flag(mode_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_column(mode_row, 8, 0);
+
+    auto make_mode_btn = [&](const char *lbl_text, ThemeMode m,
+                            lv_obj_t **btn_out) {
+        lv_obj_t *b = lv_btn_create(mode_row);
+        lv_obj_set_size(b, 100, 36);
+        *btn_out = b;
+        lv_obj_set_user_data(b, (void *)(intptr_t)m);
+        lv_obj_add_event_cb(b, [](lv_event_t *e) {
+            lv_obj_t *btn = lv_event_get_target(e);
+            ThemeMode m = (ThemeMode)(intptr_t)lv_obj_get_user_data(btn);
+            Theme t = ui_theme_current();
+            t.mode = m;
+            ui_theme_set_and_apply(t);
+            // Repaint mode row + accent row so the "currently selected"
+            // highlight moves. apply_theme() also restyles everything,
+            // but only this row's children need re-styling right now.
+            lv_obj_invalidate(s_theme_box);
+        }, LV_EVENT_CLICKED, NULL);
+        // Initial label; the build picks up the right color when the
+        // row is invalidated below.
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_text(l, lbl_text);
+        lv_obj_center(l);
+        return b;
+    };
+    // First-pass styling: highlight the currently-selected button. The
+    // lambdas above invalidate s_theme_box on every tap, so the highlight
+    // moves via lv_obj_set_style_bg_color on each repaint (handled in
+    // ui_global_apply_theme()).
+    make_mode_btn("Dark",  ThemeMode::DARK,  &s_theme_mode_btn_dark);
+    make_mode_btn("Light", ThemeMode::LIGHT, &s_theme_mode_btn_light);
+    {
+        Theme cur = ui_theme_current();
+        lv_obj_set_style_bg_color(s_theme_mode_btn_dark,
+            (cur.mode == ThemeMode::DARK)
+                ? lv_color_hex(ui_theme_accent_rgb565())
+                : lv_color_hex(ui_theme_panel_alt()), 0);
+        lv_obj_set_style_bg_color(s_theme_mode_btn_light,
+            (cur.mode == ThemeMode::LIGHT)
+                ? lv_color_hex(ui_theme_accent_rgb565())
+                : lv_color_hex(ui_theme_panel_alt()), 0);
+    }
+
+    lv_obj_t *accent_lbl = lv_label_create(s_theme_box);
+    lv_label_set_text(accent_lbl, "Accent");
+    lv_obj_set_style_text_color(accent_lbl,
+        lv_color_hex(ui_theme_text_primary()), 0);
+
+    lv_obj_t *accent_row = lv_obj_create(s_theme_box);
+    lv_obj_set_size(accent_row, LV_PCT(100), 40);
+    lv_obj_set_flex_flow(accent_row, LV_FLEX_FLOW_ROW);
+    lv_obj_clear_flag(accent_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_column(accent_row, 8, 0);
+
+    const AccentColor accent_order[4] = {
+        AccentColor::BLUE, AccentColor::GREEN,
+        AccentColor::ORANGE, AccentColor::MAGENTA,
+    };
+    const char *accent_lbls[4] = { "Blue", "Green", "Orange", "Magenta" };
+    {
+        Theme cur = ui_theme_current();
+        for (int i = 0; i < 4; i++) {
+            lv_obj_t *b = lv_btn_create(accent_row);
+            lv_obj_set_size(b, 90, 36);
+            lv_obj_set_user_data(b, (void *)(intptr_t)accent_order[i]);
+            lv_obj_t *l = lv_label_create(b);
+            lv_label_set_text(l, accent_lbls[i]);
+            lv_obj_center(l);
+            s_theme_accent_btn[i] = b;
+            lv_obj_set_style_bg_color(b,
+                (cur.accent == accent_order[i])
+                    ? lv_color_hex(ui_theme_accent_rgb565())
+                    : lv_color_hex(ui_theme_panel_alt()), 0);
+            lv_obj_add_event_cb(b, [](lv_event_t *e) {
+                lv_obj_t *btn = lv_event_get_target(e);
+                AccentColor a = (AccentColor)(intptr_t)lv_obj_get_user_data(btn);
+                Theme t = ui_theme_current();
+                t.accent = a;
+                ui_theme_set_and_apply(t);
+                lv_obj_invalidate(s_theme_box);
+            }, LV_EVENT_CLICKED, NULL);
+        }
+    }
+
     // Connection / status row
     s_gstatus_label = lv_label_create(parent);
     lv_obj_set_width(s_gstatus_label, LV_PCT(100));
@@ -288,6 +407,61 @@ void ui_global_build(lv_obj_t *parent) {
     lv_label_set_text(s_conn_dot, LV_SYMBOL_WIFI);
     lv_obj_align(s_conn_dot, LV_ALIGN_TOP_RIGHT, -12, 10);
     update_conn_indicator();
+}
+
+// ---- Theme support (Tier 1.4) -------------------------------------------
+// ui_theme.cpp dispatches here via ui_global::apply_theme(). Re-styles the
+// status row + the picker highlight + the picker panel border. The conn-dot
+// is restyled by ui_theme.cpp directly (it has the only cross-screen static).
+static void restyle_picker_highlight(void) {
+    Theme cur = ui_theme_current();
+    // Mode buttons: highlight the active one.
+    if (s_theme_mode_btn_dark) {
+        lv_obj_set_style_bg_color(s_theme_mode_btn_dark,
+            (cur.mode == ThemeMode::DARK)
+                ? lv_color_hex(ui_theme_accent_rgb565())
+                : lv_color_hex(ui_theme_panel_alt()), 0);
+    }
+    if (s_theme_mode_btn_light) {
+        lv_obj_set_style_bg_color(s_theme_mode_btn_light,
+            (cur.mode == ThemeMode::LIGHT)
+                ? lv_color_hex(ui_theme_accent_rgb565())
+                : lv_color_hex(ui_theme_panel_alt()), 0);
+    }
+    // Accent buttons: highlight the active one.
+    const AccentColor accent_order[4] = {
+        AccentColor::BLUE, AccentColor::GREEN,
+        AccentColor::ORANGE, AccentColor::MAGENTA,
+    };
+    for (int i = 0; i < 4; i++) {
+        if (s_theme_accent_btn[i]) {
+            lv_obj_set_style_bg_color(s_theme_accent_btn[i],
+                (cur.accent == accent_order[i])
+                    ? lv_color_hex(ui_theme_accent_rgb565())
+                    : lv_color_hex(ui_theme_panel_alt()), 0);
+        }
+    }
+}
+
+void ui_global_apply_theme(void) {
+    // Status row (bottom of Global tab).
+    if (s_gstatus_label) {
+        lv_obj_set_style_text_color(s_gstatus_label,
+            lv_color_hex(ui_theme_text_muted()), 0);
+    }
+    // Theme picker container — panel + border + the "currently selected"
+    // button highlight.
+    if (s_theme_box) {
+        lv_obj_set_style_bg_color(s_theme_box,
+            lv_color_hex(ui_theme_panel_bg()), 0);
+        lv_obj_set_style_border_color(s_theme_box,
+            lv_color_hex(ui_theme_border()), 0);
+        restyle_picker_highlight();
+    }
+}
+
+namespace ui_global {
+    void apply_theme() { ui_global_apply_theme(); }
 }
 
 void ui_global_apply_state(const GlobalsState &g) {
