@@ -68,16 +68,33 @@ static String render_index_html(const String &psk) {
     return html;
 }
 
-// Compute the per-device AP password from the chip's efuse MAC. Last 3 bytes
-// rendered as lowercase hex = 6 chars. Reproducible across reboots but unique
-// per device; printed on the captive-portal form so the user knows what to
-// type when joining the AP.
-static String derive_ap_psk() {
+// Per-device identity: last 3 bytes of the efuse MAC as lowercase hex (6
+// chars). Reproducible across reboots, unique per device. Single source of
+// truth for the AP PSK, the OTA hostname, and the OTA password.
+String config_device_hex() {
     uint64_t mac = ESP.getEfuseMac();
     char buf[7];
     snprintf(buf, sizeof(buf), "%02x%02x%02x",
              (uint8_t)(mac >> 16), (uint8_t)(mac >> 8), (uint8_t)mac);
     return String(buf);
+}
+
+// The per-device AP password, printed on the captive-portal form so the user
+// knows what to type when joining the AP.
+static String derive_ap_psk() {
+    return config_device_hex();
+}
+
+// mDNS hostname advertised for network OTA: "ledfx-hmi-<hex>".
+String config_ota_hostname() {
+    return "ledfx-hmi-" + config_device_hex();
+}
+
+// OTA password. Same 8+-char scheme as the softAP password (6-hex + a fixed
+// suffix so it clears the WPA2 minimum and is long enough to matter), so a
+// single per-device secret guards both the setup AP and network reflashing.
+String config_ota_password() {
+    return config_device_hex() + "hmi2026";
 }
 
 bool config_url_is_valid(const String &url) {

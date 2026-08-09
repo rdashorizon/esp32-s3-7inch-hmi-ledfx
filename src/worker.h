@@ -68,6 +68,14 @@ void worker_init();
 // UI -> worker. Returns false if the worker isn't running or the queue is full.
 bool worker_submit(const Request &req);
 
+// Suspend / resume the background network task. Used during a network OTA
+// flash (Tier 4) so the worker isn't issuing HTTP calls — and racing for the
+// WiFi stack — while the firmware image is being written. Safe no-ops before
+// worker_init(). Resume is idempotent; suspend/resume are not ref-counted, so
+// pair them 1:1.
+void worker_suspend();
+void worker_resume();
+
 // worker -> UI. Non-blocking; returns false when no result is pending.
 bool worker_poll(Result &out);
 

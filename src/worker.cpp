@@ -19,6 +19,7 @@ extern Config g_config;  // defined in main.cpp
 
 static QueueHandle_t s_req_q = nullptr;
 static QueueHandle_t s_res_q = nullptr;
+static TaskHandle_t  s_task  = nullptr;  // captured so OTA can suspend us
 
 static const int      QUEUE_LEN   = 12;
 static const uint32_t WORKER_STACK = 12288;  // HTTP client + JSON parse headroom
@@ -295,7 +296,15 @@ void worker_init() {
     if (s_req_q) return;  // already initialised
     s_req_q = xQueueCreate(QUEUE_LEN, sizeof(Request));
     s_res_q = xQueueCreate(QUEUE_LEN, sizeof(Result));
-    xTaskCreatePinnedToCore(worker_task, "ledfx_net", WORKER_STACK, nullptr, 1, nullptr, 0);
+    xTaskCreatePinnedToCore(worker_task, "ledfx_net", WORKER_STACK, nullptr, 1, &s_task, 0);
+}
+
+void worker_suspend() {
+    if (s_task) vTaskSuspend(s_task);
+}
+
+void worker_resume() {
+    if (s_task) vTaskResume(s_task);
 }
 
 bool worker_submit(const Request &req) {

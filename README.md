@@ -13,7 +13,7 @@ laptop, no browser.
 |---|---|
 | **Scenes** | Browse every saved LedFx scene as a scrollable grid. Tap → activate. Long-press → deactivate. The active scene is highlighted. |
 | **Virtuals** | List every virtual with its active effect. Toggle each on/off. 🎲 randomize the active effect. Pause all. Clear all. |
-| **Global** | Master brightness (LedFx `global_brightness`), mirror/flip, gradient picker, on-device **screen brightness**, plus **Settings** and **Reset** buttons. |
+| **Global** | Master brightness (LedFx `global_brightness`), mirror/flip, gradient picker, on-device **screen brightness**, the **network-OTA** target (hostname + password), plus **Settings** and **Reset** buttons. |
 | **Setup** | First-run captive portal for WiFi + LedFx URL + username/password. |
 
 The Global controls seed from the live server state, and the front data screen
@@ -45,11 +45,34 @@ You need [PlatformIO](https://platformio.org/) (Core 6.x or PIO in VS Code).
 git clone https://github.com/rdashorizon/esp32-s3-7inch-hmi-ledfx.git
 cd esp32-s3-7inch-hmi-ledfx
 pio run -e crowpanel-7inch
-# Flash:
+# Flash over USB:
 pio run -e crowpanel-7inch -t upload --upload-port /dev/ttyUSB0
 # Monitor serial:
 pio device monitor -p /dev/ttyUSB0 -b 115200
 ```
+
+## Updating over WiFi (OTA)
+
+Once the panel is on the wall, you don't need to unmount it for a USB cable —
+it can be reflashed over WiFi. The device advertises itself as
+`ledfx-hmi-<hex>.local` and shows its OTA **hostname** and **password** on the
+**Global** tab (also printed to serial on boot). Build the same firmware and
+push it over the network:
+
+```bash
+pio run -e crowpanel-7inch-ota -t upload \
+    --upload-port ledfx-hmi-<hex>.local \
+    --upload-flags "--auth=<ota-password>"
+```
+
+The panel shows a full-screen progress bar during the update and reboots into
+the new firmware automatically. If the upload fails (wrong password, dropped
+WiFi) the device keeps running the current firmware and returns to the normal
+UI. The image is identical to the USB build — only the upload transport differs.
+
+> OTA needs two app partitions, so this build uses an OTA-capable partition
+> table (`partitions_ota.csv`) instead of the old single-slot `huge_app.csv`.
+> Your saved WiFi/LedFx settings live in NVS and survive the switch.
 
 ## First-run setup
 
@@ -87,6 +110,7 @@ src/
   net.h/.cpp        WiFi + HTTPClient; optional bearer auth with re-auth on 401
   ledfx.h/.cpp      REST client with named methods (fetch_scenes, activate_scene, …)
   worker.h/.cpp     FreeRTOS network task (core 0) + request/result queues
+  ota.h/.cpp        network firmware updates (ArduinoOTA) + progress overlay
   ui.h/.cpp         LVGL screens (Scenes / Virtuals / Global / Settings)
 ```
 

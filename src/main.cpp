@@ -13,6 +13,7 @@
 #include "ledfx.h"
 #include "ui.h"
 #include "worker.h"
+#include "ota.h"
 
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_heap_caps.h>
@@ -82,6 +83,11 @@ void setup(void) {
         }
     }
 
+    // Configure network OTA (Tier 4). The listener starts lazily once WiFi is
+    // up (ota_loop), so this just registers the hostname/password/callbacks;
+    // safe to call before the link is established.
+    ota_setup();
+
 #if defined(ARDUINO_ARCH_ESP32)
     // Heap monitor on core 0 — 2 KB stack is enough for the printf-only task.
     xTaskCreatePinnedToCore(heapmon_task, "heapmon", 2048, nullptr, 1, nullptr, 0);
@@ -90,5 +96,6 @@ void setup(void) {
 
 void loop(void) {
     lvgl_tick();
+    ota_loop();   // service network OTA (cheap when idle; blocks during a flash)
     delay(5);
 }

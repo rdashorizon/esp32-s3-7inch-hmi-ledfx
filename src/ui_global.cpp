@@ -100,6 +100,11 @@ static void update_global_status(void) {
     } else {
         s += "\nLast refresh: never";
     }
+    // OTA target (Tier 4). Shown here so the user can read the network-update
+    // hostname + password off the panel and reflash over WiFi without a serial
+    // cable. LAN-only convenience; the AP setup form already prints the PSK the
+    // same way, so this is consistent with the device's existing posture.
+    s += "\nOTA: " + config_ota_hostname() + ".local  pw " + config_ota_password();
     lv_label_set_text(s_gstatus_label, s.c_str());
 }
 

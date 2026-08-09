@@ -1,0 +1,26 @@
+# Partition table for the CrowPanel 7" HMI (4 MB flash) — OTA-capable.
+#
+# Tier 4 replaced the single-slot `huge_app.csv` (one 3 MB app, no way to do a
+# network update) with two app slots so ArduinoOTA / espota can write a new
+# image into the inactive slot and swap on reboot (see src/ota.cpp).
+#
+# This project stores everything in NVS (Preferences) and uses no filesystem,
+# so there is no SPIFFS/LittleFS partition — that space goes to the app slots
+# instead, giving 0x1F0000 (~1.94 MB) each, more headroom than the stock
+# `min_spiffs.csv` layout's 0x1E0000 (1.875 MB). The firmware must fit within
+# one app slot; if it ever grows past ~1.94 MB the build will fail at the
+# image-size check.
+#
+# App partitions must start on a 0x10000 (64 KB) boundary — 0x10000 and
+# 0x200000 both qualify. The trailing 0x10000 goes to a coredump partition for
+# crash post-mortems (matches this project's diagnostic bent).
+#
+# nvs stays at 0x9000/0x5000 so settings saved under the old huge_app layout
+# survive the switch (same offset + size as huge_app.csv / the Arduino default).
+#
+# Name,     Type, SubType,  Offset,   Size,      Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xe000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x1F0000,
+app1,       app,  ota_1,    0x200000, 0x1F0000,
+coredump,   data, coredump, 0x3F0000, 0x10000,

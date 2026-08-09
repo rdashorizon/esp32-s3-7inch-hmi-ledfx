@@ -68,4 +68,18 @@ private:
 // editor to reject garbage before rebooting.
 bool config_url_is_valid(const String &url);
 
+// Per-device identity derived from the chip's efuse MAC (last 3 bytes as
+// lowercase hex, e.g. "a1b2c3"). Stable across reboots, unique per board.
+// This is the single source of truth for the AP PSK, the OTA hostname, and the
+// OTA password below.
+String config_device_hex();
+
+// Network-OTA identity (Tier 4). The hostname is what appears on the LAN /
+// espota target list; the password guards `pio run -t upload` over the network
+// so a stranger on the same WiFi can't reflash the panel. Both are printed to
+// Serial on boot and shown on the Global tab so the user can read them off the
+// device without a serial cable.
+String config_ota_hostname();   // "ledfx-hmi-<hex>"
+String config_ota_password();   // per-device OTA password
+
 extern ConfigStore config_store;

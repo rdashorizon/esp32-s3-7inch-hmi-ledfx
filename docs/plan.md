@@ -109,7 +109,9 @@ src/
                   swatch in §4 Screen 2)
   worker.h/.cpp   FreeRTOS task pinned to core 0 + request/result queues;
                   request builders: req_simple/req_id/req_payload/req_arg/
-                  req_flag/req_test_connection
+                  req_flag/req_test_connection; worker_suspend/resume for OTA
+  ota.h/.cpp      network OTA (ArduinoOTA/espota): progress overlay + worker
+                  suspend during the flash (Tier 4)
   ui.h/.cpp       Tabview + result pump + glue (target: <250 LOC)
   ui_global.{h,cpp}     Global tab + connection indicator + panel-bright
                         slider + auto-dim + boot splash
@@ -173,6 +175,18 @@ sections 5–8 turned out wrong:
 
 mDNS auto-discovery of the LedFx server, live WebSocket state (vs polling), OTA
 updates, and MQTT / Home Assistant integration.
+
+**Tier 4 shipped: network OTA updates** (see §14). The other three remain open:
+
+- **mDNS auto-discovery of the LedFx server** — deferred deliberately. Mainline
+  LedFx does not advertise its own API over zeroconf (it *uses* zeroconf to find
+  WLED devices, but doesn't register an `_ledfx._tcp` / `_http._tcp` service for
+  itself), so there is nothing reliable to discover. Revisit if/when LedFx
+  starts advertising.
+- **Live WebSocket state (vs polling)** — needs a WebSocket client dependency
+  and a rewrite of the poll-based worker; larger than one tier.
+- **MQTT / Home Assistant integration** — needs a broker, `PubSubClient`, and a
+  new config surface (broker URL / topic / creds in setup).
 
 ## 12. As-built notes — Color picker + related (post-color-picker)
 
@@ -291,3 +305,70 @@ preserving every other effect config field.
   The per-virtual color modal alone is ~180 LOC. Worth splitting into a
   sibling module `ui_virtuals_color.{h,cpp}` if a 3rd polish iteration
   adds more per-virtual features.
+
+## 14. As-built notes — Tier 4: network OTA updates
+
+Reflash the wall-mounted panel over WiFi instead of unmounting it for a USB
+cable. This is the highest-value of the §11 candidates for *this* device (a
+panel screwed to a wall is genuinely annoying to reach with a cable) and, unlike
+mDNS discovery, depends on nothing about how the LedFx server behaves.
+
+- **New module `src/ota.{h,cpp}`** wraps `ArduinoOTA` (the espota protocol).
+  `ota_setup()` registers hostname/password/callbacks in `setup()`;
+  `ota_loop()` is polled from `loop()` and lazily calls `ArduinoOTA.begin()`
+  the first time WiFi is up (the worker owns the WiFi connect, so OTA just
+  waits for `WiFi.status() == WL_CONNECTED`). `ArduinoOTA` is bundled with the
+  arduino-esp32 framework — no new `lib_deps` entry.
+
+- **Partition table changed** from `huge_app.csv` (one 3 MB app slot, no way to
+  OTA) to a project-local `partitions_ota.csv` with two app slots. The device
+  stores everything in NVS and uses no filesystem, so the SPIFFS partition is
+  dropped and that space goes to the app slots: **0x1F0000 (~1.94 MB) each**,
+  more headroom than the stock `min_spiffs.csv` layout's 0x1E0000 (1.875 MB).
+  Both slots start on a 0x10000 (64 KB) boundary (0x10000 and 0x200000) as
+  esptool requires, and the trailing 64 KB is a `coredump` partition. `nvs`
+  stays at `0x9000/0x5000` (identical to huge_app / the Arduino default), so
+  settings saved under the old layout survive the reflash to the new one.
+  **The firmware must fit one app slot; if it grows past ~1.94 MB the build
+  fails at the image-size check.**
+
+- **Could not verify the image size in-repo.** The Tier 4 work was done in an
+  environment whose egress policy blocks `api.registry.platformio.org`, so the
+  ESP32 toolchain couldn't be downloaded and `pio run` couldn't complete. The
+  ~1.94 MB-per-slot layout was chosen to maximise headroom precisely because the
+  binary couldn't be measured here; a real build machine should confirm the
+  image fits (a typical LVGL + LovyanGFX + WiFi build lands well under that).
+
+- **Progress UI.** `ota_loop()` runs on the LVGL thread (core 1), so the
+  ArduinoOTA callbacks build a top-layer overlay (title + `lv_bar` + %) directly.
+  `ArduinoOTA.handle()` blocks for the whole transfer, so the normal LVGL tick
+  isn't running during a flash — `onProgress` calls `lv_refr_now(NULL)` itself,
+  throttled to real 1 % steps so repaints don't slow the transfer. The RGB panel
+  scans its PSRAM framebuffer via DMA independently, so updating the framebuffer
+  is enough to move the bar on screen.
+
+- **Worker suspended during the flash.** `worker_suspend()` / `worker_resume()`
+  (new; the worker task handle is now captured in `worker_init()`) bracket the
+  update so core 0 isn't issuing HTTP calls and racing the WiFi stack while the
+  image is written. `onEnd` reboots (ArduinoOTA does the restart), so the
+  success path never needs `worker_resume()`; `onError` tears the overlay down
+  and resumes so the UI recovers on the *old* firmware. Note `OTA_AUTH_ERROR`
+  can fire before `onStart`, i.e. before the suspend — `vTaskResume()` on a
+  task that was never suspended is a safe no-op, so the unbalanced
+  resume-without-suspend in that path is fine.
+
+- **Per-device identity is one secret.** `config_device_hex()` (the efuse-MAC
+  last-3-bytes hex, factored out of the old `derive_ap_psk()`) now backs the AP
+  PSK, the OTA hostname (`ledfx-hmi-<hex>`), and the OTA password
+  (`<hex>hmi2026`, the same 8+-char scheme the softAP already uses). The
+  hostname + password are printed to Serial on boot and shown on the Global tab
+  so the user can read them off the panel and run `pio run -t upload` without a
+  serial cable. Showing the password on an always-visible screen is a mild
+  LAN-only exposure, consistent with the setup portal already printing the AP
+  PSK; the OTA path is still password-gated against a stranger on the same WiFi.
+
+- **Second PlatformIO env `crowpanel-7inch-ota`** `extends` the USB env and only
+  swaps `upload_protocol = espota`. The built image is byte-identical; only the
+  upload transport differs, so `pio run -e crowpanel-7inch` stays the canonical
+  build. `upload_port` / `--auth` are left commented because they're per-device
+  (fill in from the Global tab).
