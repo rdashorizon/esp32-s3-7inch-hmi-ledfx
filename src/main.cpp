@@ -4,6 +4,7 @@
 // client, and the UI.
 // ---------------------------------------------------------------------------
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include "display.h"
 #include "touch.h"
 #include "lvgl_port.h"
@@ -59,6 +60,27 @@ void setup(void) {
     worker_submit(req_simple(REQ_CONNECT));
 
     ui_init();  // enqueues the initial scenes fetch + starts the result pump
+
+    // Re-apply the last-picked color to LedFx so the LED strip matches the
+    // device's display state on boot. Skipped if the saved color is the
+    // warm-white default (first boot) — that would just be noise on a fresh
+    // install where the user hasn't picked anything yet.
+    {
+        LedColor saved = config_store.load_last_color();
+        bool is_default = (saved.r == 255 && saved.g == 200 && saved.b == 128);
+        if (!is_default) {
+            StaticJsonDocument<128> doc;
+            doc["action"] = "apply_global";
+            char hex[8];
+            snprintf(hex, sizeof(hex), "#%02x%02x%02x", saved.r, saved.g, saved.b);
+            doc["background_color"] = hex;
+            String body;
+            serializeJson(doc, body);
+            worker_submit(req_payload(REQ_APPLY_GLOBAL, body));
+            Serial.printf("[boot] re-applying saved color #%02x%02x%02x\n",
+                          saved.r, saved.g, saved.b);
+        }
+    }
 
 #if defined(ARDUINO_ARCH_ESP32)
     // Heap monitor on core 0 — 2 KB stack is enough for the printf-only task.
