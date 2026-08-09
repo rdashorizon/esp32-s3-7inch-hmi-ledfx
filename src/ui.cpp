@@ -12,6 +12,7 @@
 #include "ledfx.h"     // SceneInfo / VirtualInfo
 #include "worker.h"    // background network worker (submit/poll)
 #include "config.h"
+#include "display.h"   // display_set_backlight()
 #include <ArduinoJson.h>
 
 extern Config g_config;  // see main.cpp
@@ -35,6 +36,15 @@ static lv_obj_t *s_scene_spinner = nullptr;
 static lv_obj_t *s_scene_error   = nullptr;
 static lv_obj_t *s_virt_spinner  = nullptr;
 static lv_obj_t *s_virt_error    = nullptr;
+
+// Persistent link indicator (top layer, always visible).
+static lv_obj_t *s_conn_dot = nullptr;
+
+// On-device screen backlight + auto-dim on inactivity.
+static uint8_t s_screen_bright = 255;   // target backlight when awake (0..255)
+static bool    s_dimmed        = false;
+static const uint32_t DIM_TIMEOUT_MS = 60000;  // dim after 60 s with no touch
+static const uint8_t  DIM_LEVEL      = 24;     // ~10 % while dimmed
 
 // Refresh the active data screen (scenes/virtuals) on a timer so the HUD
 // tracks LedFx state changes made elsewhere. Period in milliseconds.
@@ -281,6 +291,14 @@ static void update_global_status(void) {
     lv_label_set_text(s_gstatus_label, s.c_str());
 }
 
+// Persistent WiFi indicator on the top layer: green when connected, amber while
+// connecting. Driven by s_link_ok (updated from RES_CONN).
+static void update_conn_indicator(void) {
+    if (!s_conn_dot) return;
+    lv_obj_set_style_text_color(s_conn_dot,
+        s_link_ok ? lv_color_hex(0x33cc66) : lv_color_hex(0xd8a11a), 0);
+}
+
 // Enqueue a refresh for whichever data screen is currently in front.
 static void request_active_screen(void) {
     uint32_t idx = lv_tabview_get_tab_act(s_tabview);
@@ -343,6 +361,7 @@ static void result_pump_cb(lv_timer_t *t) {
                 s_link_ok = r.connected;
                 ui_show_status(r.msg, !r.connected);
                 update_global_status();
+                update_conn_indicator();
                 break;
         }
     }
@@ -372,6 +391,33 @@ static void reset_btn_cb(lv_event_t *e) {
         "Erase saved WiFi and LedFx settings and reboot into setup?", btns, false);
     lv_obj_add_event_cb(mbox, reset_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_center(mbox);
+}
+
+// On-device panel backlight slider (separate from LedFx LED brightness).
+static void screen_bright_cb(lv_event_t *e) {
+    lv_obj_t *sl = lv_event_get_target(e);
+    int pct = lv_slider_get_value(sl);          // 10..100
+    s_screen_bright = (uint8_t)(pct * 255 / 100);
+    if (!s_dimmed) display_set_backlight(s_screen_bright);
+}
+
+// Dim the panel after a period of no touch (burn-in + power); restore on touch.
+static void dim_tick_cb(lv_timer_t *t) {
+    (void)t;
+    uint32_t idle = lv_disp_get_inactive_time(NULL);
+    if (idle > DIM_TIMEOUT_MS && !s_dimmed) {
+        display_set_backlight(DIM_LEVEL);
+        s_dimmed = true;
+    } else if (idle <= DIM_TIMEOUT_MS && s_dimmed) {
+        display_set_backlight(s_screen_bright);
+        s_dimmed = false;
+    }
+}
+
+// Remove the one-shot boot splash overlay.
+static void splash_done_cb(lv_timer_t *t) {
+    lv_obj_t *splash = (lv_obj_t *)t->user_data;
+    if (splash) lv_obj_del(splash);  // timer auto-deletes (repeat count reached 0)
 }
 
 static void build_global_screen(void) {
@@ -422,6 +468,20 @@ static void build_global_screen(void) {
     lv_obj_t *fs = lv_switch_create(frow);
     lv_obj_add_event_cb(fs, flip_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
+    // Screen backlight (this panel, not the LEDs) — live, no Apply needed.
+    lv_obj_t *brow = lv_obj_create(s_tab_global);
+    lv_obj_set_size(brow, LV_PCT(100), 70);
+    lv_obj_set_flex_flow(brow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(brow, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t *sbl = lv_label_create(brow);
+    lv_label_set_text(sbl, "Screen brightness");
+    lv_obj_t *sbs = lv_slider_create(brow);
+    lv_obj_set_width(sbs, 400);
+    lv_slider_set_range(sbs, 10, 100);
+    lv_slider_set_value(sbs, 100, LV_ANIM_OFF);
+    lv_obj_add_event_cb(sbs, screen_bright_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
     // Gradient preset picker
     lv_obj_t *grow = lv_obj_create(s_tab_global);
     lv_obj_set_size(grow, LV_PCT(100), 70);
@@ -463,6 +523,7 @@ static void tab_changed_cb(lv_event_t *e) {
 // ---- Init ------------------------------------------------------------------
 void ui_init(void) {
     s_root = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_root, lv_color_hex(0x0d0d14), 0);  // dark ground
     lv_scr_load(s_root);
 
     s_tabview = lv_tabview_create(s_root, LV_DIR_TOP, 40);
@@ -530,6 +591,12 @@ void ui_init(void) {
 
     build_global_screen();
 
+    // Persistent WiFi link indicator on the top layer (always visible).
+    s_conn_dot = lv_label_create(lv_layer_top());
+    lv_label_set_text(s_conn_dot, LV_SYMBOL_WIFI);
+    lv_obj_align(s_conn_dot, LV_ALIGN_TOP_RIGHT, -12, 10);
+    update_conn_indicator();
+
     ui_show_status("Connecting to LedFx…");
 
     // Drain worker results (and repaint) on the LVGL thread.
@@ -538,6 +605,21 @@ void ui_init(void) {
     request_scenes();
     // Keep the front data screen (and the status row) in sync with LedFx.
     lv_timer_create(auto_refresh_cb, AUTO_REFRESH_MS, NULL);
+    // Auto-dim the panel after a period of no touch.
+    lv_timer_create(dim_tick_cb, 1000, NULL);
+
+    // One-shot boot splash over everything, removed after ~1.2 s.
+    lv_obj_t *splash = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(splash, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(splash, lv_color_hex(0x0a0a12), 0);
+    lv_obj_set_style_bg_opa(splash, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(splash, 0, 0);
+    lv_obj_clear_flag(splash, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *stitle = lv_label_create(splash);
+    lv_label_set_text(stitle, LV_SYMBOL_HOME "  LedFx HMI");
+    lv_obj_center(stitle);
+    lv_timer_t *st = lv_timer_create(splash_done_cb, 1200, splash);
+    lv_timer_set_repeat_count(st, 1);
 }
 
 void ui_show_status(const char *msg, bool is_error) {
