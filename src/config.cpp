@@ -22,6 +22,7 @@ static const char *K_USER = "ledfx_user";
 static const char *K_LPASS = "ledfx_pass";
 static const char *K_AP_TOUT = "ap_timeout";
 static const char *K_SCRBRI = "scr_bright";
+static const char *K_LASTTAB = "last_tab";
 
 static const byte DNS_PORT = 53;
 static const IPAddress AP_IP(4, 3, 2, 1);
@@ -108,6 +109,23 @@ void ConfigStore::save_screen_brightness(uint8_t pct) {
     Preferences prefs;
     prefs.begin(NVS_NS, false);
     prefs.putUChar(K_SCRBRI, pct);
+    prefs.end();
+}
+
+uint8_t ConfigStore::load_last_tab(uint8_t def) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    uint8_t idx = prefs.getUChar(K_LASTTAB, def);
+    prefs.end();
+    // Clamp to a sane range; corrupted NVS could land us anywhere.
+    if (idx > 2) idx = def;
+    return idx;
+}
+
+void ConfigStore::save_last_tab(uint8_t idx) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    prefs.putUChar(K_LASTTAB, idx);
     prefs.end();
 }
 

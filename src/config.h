@@ -24,6 +24,11 @@ public:
     uint8_t load_screen_brightness(uint8_t def = 100);
     void    save_screen_brightness(uint8_t pct);
 
+    // Last-selected tab index (0 = Scenes, 1 = Virtuals, 2 = Global).
+    // Returns `def` when never set.
+    uint8_t load_last_tab(uint8_t def = 0);
+    void    save_last_tab(uint8_t idx);
+
     // Captive portal DNS+webserver. Blocks until the user submits a config
     // or until timeout_seconds elapses. Returns true if a config was saved.
     bool run_captive_portal(uint32_t timeout_seconds = 0);

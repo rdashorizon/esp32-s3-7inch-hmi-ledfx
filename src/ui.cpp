@@ -179,6 +179,7 @@ static void build_global_screen(void) {
 static void tab_changed_cb(lv_event_t *e) {
     lv_obj_t *btns = lv_event_get_target(e);
     uint32_t idx = lv_tabview_get_tab_act(btns);
+    config_store.save_last_tab((uint8_t)idx);  // remember across reboots
     if (idx == 0) ui_scenes_request_refresh();
     if (idx == 1) ui_virtuals_request_refresh();
     if (idx == 2) { ui_virtuals_request_refresh(); ui_global_status_tick(); }  // refresh globals
@@ -194,6 +195,10 @@ void ui_init(void) {
     s_tab_scenes   = lv_tabview_add_tab(s_tabview, "Scenes");
     s_tab_virtuals = lv_tabview_add_tab(s_tabview, "Virtuals");
     s_tab_global   = lv_tabview_add_tab(s_tabview, "Global");
+    // Restore the last-selected tab (default Scenes). This fires the
+    // LV_EVENT_VALUE_CHANGED callback, which also kicks off the per-tab
+    // refresh — the duplicate fetch with the one below is harmless.
+    lv_tabview_set_act(s_tabview, config_store.load_last_tab(0), LV_ANIM_OFF);
     lv_obj_add_event_cb(s_tabview, tab_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     // Status bar at the bottom
