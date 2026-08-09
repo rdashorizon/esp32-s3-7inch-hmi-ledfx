@@ -173,9 +173,6 @@ sections 5–8 turned out wrong:
 
 ## 11. Out of scope — still open (Tier 4 candidates)
 
-mDNS auto-discovery of the LedFx server, live WebSocket state (vs polling), OTA
-updates, and MQTT / Home Assistant integration.
-
 **Tier 4 shipped: network OTA updates** (see §14). The other three remain open:
 
 - **mDNS auto-discovery of the LedFx server** — deferred deliberately. Mainline
@@ -187,6 +184,9 @@ updates, and MQTT / Home Assistant integration.
   and a rewrite of the poll-based worker; larger than one tier.
 - **MQTT / Home Assistant integration** — needs a broker, `PubSubClient`, and a
   new config surface (broker URL / topic / creds in setup).
+
+Deferred from earlier sessions: per-virtual effect parameter sliders,
+preset CRUD, OTA over HTTPS with a real cert.
 
 ## 12. As-built notes — Color picker + related (post-color-picker)
 
@@ -332,12 +332,20 @@ mDNS discovery, depends on nothing about how the LedFx server behaves.
   **The firmware must fit one app slot; if it grows past ~1.94 MB the build
   fails at the image-size check.**
 
-- **Could not verify the image size in-repo.** The Tier 4 work was done in an
-  environment whose egress policy blocks `api.registry.platformio.org`, so the
-  ESP32 toolchain couldn't be downloaded and `pio run` couldn't complete. The
-  ~1.94 MB-per-slot layout was chosen to maximise headroom precisely because the
-  binary couldn't be measured here; a real build machine should confirm the
-  image fits (a typical LVGL + LovyanGFX + WiFi build lands well under that).
+- **Could not verify the image size in-repo** when the OTA work was first
+  done — the environment's egress policy blocked `api.registry.platformio.org`,
+  so the ESP32 toolchain couldn't be downloaded and `pio run` couldn't complete.
+  The ~1.94 MB-per-slot layout was chosen to maximise headroom precisely
+  because the binary couldn't be measured there; a real build machine should
+  confirm the image fits (a typical LVGL + LovyanGFX + WiFi build lands well
+  under that).
+
+- **Verified post-merge** on a build machine that has the toolchain: the
+  firmware image lands at **1,212,217 bytes (~62% of the 1.94 MB slot)** with
+  RAM at 31.3% of 320 KB. Comfortable headroom for feature growth. The 38.6% →
+  62.1% jump from the single-slot build is purely the partition-table split;
+  the actual code growth is only ~10 KB (RAM) / ~6 KB (flash) for the OTA
+  plumbing.
 
 - **Progress UI.** `ota_loop()` runs on the LVGL thread (core 1), so the
   ArduinoOTA callbacks build a top-layer overlay (title + `lv_bar` + %) directly.
