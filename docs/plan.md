@@ -171,22 +171,29 @@ sections 5–8 turned out wrong:
   via on-screen **Global → Settings** (edit in place) or **Reset** (wipe +
   portal). Panel brightness has an on-device slider + auto-dim and persists.
 
-## 11. Out of scope — still open (Tier 4 candidates)
+## 11. Tier 4 candidates — status
 
-**Tier 4 shipped: network OTA updates** (see §14). The other three remain open:
+**Shipped:** network OTA updates (see §14).
 
-- **mDNS auto-discovery of the LedFx server** — deferred deliberately. Mainline
-  LedFx does not advertise its own API over zeroconf (it *uses* zeroconf to find
-  WLED devices, but doesn't register an `_ledfx._tcp` / `_http._tcp` service for
-  itself), so there is nothing reliable to discover. Revisit if/when LedFx
-  starts advertising.
-- **Live WebSocket state (vs polling)** — needs a WebSocket client dependency
-  and a rewrite of the poll-based worker; larger than one tier.
-- **MQTT / Home Assistant integration** — needs a broker, `PubSubClient`, and a
-  new config surface (broker URL / topic / creds in setup).
+**Considered and ruled out** (2026-08-09; the remaining items below are
+documented here for context, not as active work):
 
-Deferred from earlier sessions: per-virtual effect parameter sliders,
-preset CRUD, OTA over HTTPS with a real cert.
+- **mDNS auto-discovery of the LedFx server** — unreliable. Mainline LedFx
+  does not advertise its own API over zeroconf (it *uses* zeroconf to find
+  WLED devices, but doesn't register an `_ledfx._tcp` / `_http._tcp` service
+  for itself), so there is nothing reliable to discover. Revisit if/when
+  LedFx starts advertising.
+- **Live WebSocket state (vs polling)** — too large. Needs a WebSocket
+  client dependency and a rewrite of the poll-based worker; larger than one
+  tier of work for diminishing returns (the 30 s polling is acceptable
+  latency for a wall controller).
+- **MQTT / Home Assistant integration** — too complex. Needs a broker,
+  `PubSubClient`, and a new config surface (broker URL / topic / creds in
+  setup). Out of scope for this device.
+
+Other items still deferred from earlier sessions (not Tier 4; future
+features): per-virtual effect parameter sliders, preset CRUD, OTA over
+HTTPS with a real cert.
 
 ## 12. As-built notes — Color picker + related (post-color-picker)
 
