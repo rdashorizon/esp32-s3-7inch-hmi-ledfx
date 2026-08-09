@@ -23,6 +23,7 @@ static const char *K_LPASS = "ledfx_pass";
 static const char *K_AP_TOUT = "ap_timeout";
 static const char *K_SCRBRI = "scr_bright";
 static const char *K_LASTTAB = "last_tab";
+static const char *K_LASTCLR = "last_color";
 
 static const byte DNS_PORT = 53;
 static const IPAddress AP_IP(4, 3, 2, 1);
@@ -153,6 +154,25 @@ void ConfigStore::save_last_tab(uint8_t idx) {
     Preferences prefs;
     prefs.begin(NVS_NS, false);
     prefs.putUChar(K_LASTTAB, idx);
+    prefs.end();
+}
+
+LedColor ConfigStore::load_last_color() {
+    // Default: warm white (255, 200, 128) so the LED strip is visible on
+    // first boot rather than starting dark.
+    uint8_t buf[3] = {255, 200, 128};
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    prefs.getBytes(K_LASTCLR, buf, sizeof(buf));
+    prefs.end();
+    return { buf[0], buf[1], buf[2] };
+}
+
+void ConfigStore::save_last_color(LedColor c) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    uint8_t buf[3] = { c.r, c.g, c.b };
+    prefs.putBytes(K_LASTCLR, buf, sizeof(buf));
     prefs.end();
 }
 

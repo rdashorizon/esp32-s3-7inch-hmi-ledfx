@@ -13,6 +13,17 @@ struct Config {
     String ledfx_pass;
 };
 
+// RGB triple used by the Color picker tab (and any future color-aware
+// feature). Persisted to NVS by ui_color_apply_now() so the device restores
+// the last-picked color on boot.
+//
+// Named `LedColor` rather than the more obvious `RGBColor` to avoid colliding
+// with LovyanGFX's RGBColor struct (which has r/g/b members but also R8/G8/B8
+// bitfield accessors, etc.).
+struct LedColor {
+    uint8_t r, g, b;
+};
+
 class ConfigStore {
 public:
     bool load(Config &out);
@@ -24,10 +35,14 @@ public:
     uint8_t load_screen_brightness(uint8_t def = 100);
     void    save_screen_brightness(uint8_t pct);
 
-    // Last-selected tab index (0 = Scenes, 1 = Virtuals, 2 = Global).
+    // Last-selected tab index (0 = Scenes, 1 = Virtuals, 2 = Color, 3 = Global).
     // Returns `def` when never set.
     uint8_t load_last_tab(uint8_t def = 0);
     void    save_last_tab(uint8_t idx);
+
+    // Last picked color (RGB 0..255 each). Defaults to warm white when unset.
+    LedColor load_last_color();
+    void     save_last_color(LedColor c);
 
     // Captive portal DNS+webserver. Blocks until the user submits a config
     // or until timeout_seconds elapses. Returns true if a config was saved.

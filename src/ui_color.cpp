@@ -14,7 +14,7 @@
 #include "ui_color.h"
 #include "ui.h"            // ui_submit, ui_show_status
 #include "worker.h"        // req_payload, REQ_APPLY_GLOBAL
-#include "config.h"        // RGBColor, load/save_last_color (Tier 1.5)
+#include "config.h"        // LedColor, load/save_last_color (Tier 1.5)
 #include <Arduino.h>       // millis
 #include <ArduinoJson.h>   // StaticJsonDocument (Tier 1.4)
 #include <stdarg.h>        // va_list (banner; Tier 2)
@@ -27,8 +27,9 @@ static lv_obj_t *s_swatch;
 static lv_obj_t *s_apply_btn;
 static lv_obj_t *s_banner = nullptr;  // hidden by default; shown by pump_result
 
-// Current color in 0..255 per channel. Defaults to a warm white so the
-// device starts in a non-dark state and the LED strip is visible.
+// Current color in 0..255 per channel. Defaults are read from NVS on build
+// so the device restores the user's last pick; if no pick has been saved,
+// load_last_color() returns warm white (255, 200, 128).
 static uint8_t s_r = 255, s_g = 200, s_b = 128;
 static uint32_t s_last_apply_ms = 0;  // throttle live-apply during drag
 
@@ -102,6 +103,8 @@ void ui_color_apply_now(void) {
     String body;
     serializeJson(doc, body);
     ui_submit(req_payload(REQ_APPLY_GLOBAL, body));
+    // Persist the picked color so the next boot returns to the same color.
+    config_store.save_last_color({s_r, s_g, s_b});
 }
 
 void ui_color_pump_result(int status, const char *msg) {
@@ -114,6 +117,14 @@ void ui_color_pump_result(int status, const char *msg) {
 
 // ---- Build -----------------------------------------------------------------
 void ui_color_build(lv_obj_t *parent) {
+    // Restore the user's last-picked color (or warm-white default on first
+    // boot). Done before widget creation so the colorwheel starts in the
+    // right position and the swatch shows the saved color immediately.
+    LedColor saved = config_store.load_last_color();
+    s_r = saved.r;
+    s_g = saved.g;
+    s_b = saved.b;
+
     lv_obj_set_flex_flow(parent, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_all(parent, 16, 0);
     lv_obj_set_flex_align(parent, LV_FLEX_ALIGN_SPACE_BETWEEN,
