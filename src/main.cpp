@@ -13,9 +13,27 @@
 #include "ui.h"
 #include "worker.h"
 
+#if defined(ARDUINO_ARCH_ESP32)
+#include <esp_heap_caps.h>
+#endif
+
 Config g_config;
 
 // g_ledfx is defined once in ledfx.cpp and declared extern in ledfx.h.
+
+// Periodic heap + PSRAM free-space printout, pinned to core 0 so it never
+// disturbs the LVGL render loop on core 1. Useful for catching fragmentation
+// regressions in the field.
+static void heapmon_task(void *) {
+    for (;;) {
+#if defined(ARDUINO_ARCH_ESP32)
+        Serial.printf("[heap] free=%u spiram_free=%u\n",
+                      (unsigned)ESP.getFreeHeap(),
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+#endif
+        vTaskDelay(pdMS_TO_TICKS(30000));
+    }
+}
 
 void setup(void) {
     Serial.begin(115200);
@@ -41,6 +59,11 @@ void setup(void) {
     worker_submit(req_simple(REQ_CONNECT));
 
     ui_init();  // enqueues the initial scenes fetch + starts the result pump
+
+#if defined(ARDUINO_ARCH_ESP32)
+    // Heap monitor on core 0 — 2 KB stack is enough for the printf-only task.
+    xTaskCreatePinnedToCore(heapmon_task, "heapmon", 2048, nullptr, 1, nullptr, 0);
+#endif
 }
 
 void loop(void) {
