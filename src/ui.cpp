@@ -13,11 +13,15 @@
 // All UI state below is owned by the LVGL thread (core 1):
 //   - s_scenes / s_scene_count — written only by result_pump_cb (RES_SCENES)
 //   - s_virt   / s_virt_count   — written only by result_pump_cb (RES_VIRTUALS)
-//   - s_link_ok                 — written only by result_pump_cb (RES_CONN)
-// Reads happen from LVGL event callbacks and timers on the same thread — safe.
-// The worker (core 0) MUST NOT touch any of these directly; it goes through
-// worker_submit() and posts a Result. If you need a new piece of cross-thread
-// state, add it to the Result struct in worker.h and read it in the pump.
+//   - s_pause_sw                — created in ui_init, toggled by Virtuals
+//                                 toolbar; state is synced from server via
+//                                 ui_global_apply_state_with_pause().
+// The worker's link state and "last refresh" timestamp live in ui_global
+// (ui_global_link_ok(), ui_global_mark_refreshed()) — same LVGL thread, no
+// race. The worker (core 0) MUST NOT touch any UI state directly; it goes
+// through worker_submit() and posts a Result. If you need a new piece of
+// cross-thread state, add it to the Result struct in worker.h and read it
+// in the pump.
 // ---------------------------------------------------------------------------
 #include "ui.h"
 #include "ledfx.h"     // SceneInfo / VirtualInfo
@@ -25,6 +29,7 @@
 #include "config.h"
 #include "display.h"   // display_set_backlight()
 #include "ui_settings.h"  // on-device settings editor (extracted module)
+#include "ui_global.h"    // Global tab + dim + splash + conn indicator
 #include <ArduinoJson.h>
 
 extern Config g_config;  // see main.cpp
@@ -36,12 +41,11 @@ static lv_obj_t *s_tab_virtuals;
 static lv_obj_t *s_tab_global;
 static lv_obj_t *s_status_label;
 
-// Global-screen connection/status row + last successful data refresh.
-static lv_obj_t *s_gstatus_label = nullptr;
-static uint32_t  s_last_refresh_ms = 0;
-// Link state, mirrored from the worker's RES_CONN messages. The UI never reads
-// the network client directly (that would race the worker thread).
-static bool      s_link_ok = false;
+// s_pause_sw lives here (created on the Virtuals tab in ui_init) because
+// it crosses tab boundaries: the Virtuals toolbar toggles it, and the
+// result pump's RES_VIRTUALS handler (which lives here) syncs its state
+// from the server via ui_global_apply_state_with_pause().
+static lv_obj_t *s_pause_sw = nullptr;
 
 // Per-data-screen loading spinner + error banner (overlaid on the tab).
 static lv_obj_t *s_scene_spinner = nullptr;
@@ -49,24 +53,12 @@ static lv_obj_t *s_scene_error   = nullptr;
 static lv_obj_t *s_virt_spinner  = nullptr;
 static lv_obj_t *s_virt_error    = nullptr;
 
-// Persistent link indicator (top layer, always visible).
-static lv_obj_t *s_conn_dot = nullptr;
-
-// On-device screen backlight + auto-dim on inactivity.
-static lv_obj_t *s_screen_bright_slider = nullptr;
-static int     s_screen_bright_pct = 100;  // persisted panel brightness (%)
-static uint8_t s_screen_bright = 255;      // target backlight when awake (0..255)
-static bool    s_dimmed        = false;
-static const uint32_t DIM_TIMEOUT_MS = 60000;  // dim after 60 s with no touch
-static const uint8_t  DIM_LEVEL      = 24;     // ~10 % while dimmed
-
 // Refresh the active data screen (scenes/virtuals) on a timer so the HUD
 // tracks LedFx state changes made elsewhere. Period in milliseconds.
 static const uint32_t AUTO_REFRESH_MS = 30000;
 // How often the UI drains network results from the worker and repaints.
 static const uint32_t RESULT_PUMP_MS = 80;
 
-static void update_global_status(void);
 static void request_scenes(void);
 static void request_virtuals(void);
 
@@ -146,9 +138,8 @@ static void render_scene_grid(void) {
             lv_obj_set_style_border_width(btn, 2, 0);
         }
     }
-    s_last_refresh_ms = millis();
-    update_global_status();
     ui_show_status(s_scene_count ? "Scenes refreshed" : "No scenes found");
+    ui_global_mark_refreshed();
 }
 
 // ---- Virtuals screen -------------------------------------------------------
@@ -233,109 +224,15 @@ static void render_virt_list(void) {
         lv_obj_t *empty = lv_label_create(s_virt_list);
         lv_label_set_text(empty, "No virtuals configured yet.");
     }
-    s_last_refresh_ms = millis();
-    update_global_status();
+    ui_global_mark_refreshed();
     ui_show_status("Virtuals refreshed");
 }
 
 // ---- Global screen ---------------------------------------------------------
-static lv_obj_t *s_bright_slider;
-static lv_obj_t *s_bright_value;
-// Global-screen controls that get synced from server state on refresh.
-static lv_obj_t *s_mirror_sw = nullptr;
-static lv_obj_t *s_flip_sw   = nullptr;
-static lv_obj_t *s_pause_sw  = nullptr;
-
-static void bright_slider_cb(lv_event_t *e) {
-    lv_obj_t *slider = lv_event_get_target(e);
-    int v = lv_slider_get_value(slider);
-    lv_label_set_text_fmt(s_bright_value, "%d%%", v);
-}
-
-// Build an apply_global body and hand it to the worker.
-static void submit_global(const JsonDocument &doc) {
-    String body;
-    serializeJson(doc, body);
-    worker_submit(req_payload(REQ_APPLY_GLOBAL, body));
-}
-
-static void bright_apply_cb(lv_event_t *e) {
-    (void)e;
-    // Drive LedFx's master global_brightness (config), so it matches the main
-    // LedFx brightness and dims the whole installation.
-    int v = lv_slider_get_value(s_bright_slider);
-    worker_submit(req_arg(REQ_SET_BRIGHTNESS, v));
-    ui_show_status("Applying brightness…");
-}
-
-static void mirror_cb(lv_event_t *e) {
-    lv_obj_t *sw = lv_event_get_target(e);
-    StaticJsonDocument<128> doc;
-    doc["action"] = "apply_global";
-    doc["mirror"] = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    submit_global(doc);
-}
-
-static void flip_cb(lv_event_t *e) {
-    lv_obj_t *sw = lv_event_get_target(e);
-    StaticJsonDocument<128> doc;
-    doc["action"] = "apply_global";
-    doc["flip"] = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    submit_global(doc);
-}
-
-static void gradient_cb(lv_event_t *e) {
-    lv_obj_t *dd = lv_event_get_target(e);
-    char buf[32] = {0};
-    lv_dropdown_get_selected_str(dd, buf, sizeof(buf));
-    worker_submit(req_payload(REQ_SET_GRADIENT, String(buf)));
-    ui_show_status((String("Gradient: ") + buf).c_str());
-}
-
-// Repaint the Global screen status row: server URL, link state, last refresh.
-// Link state comes from s_link_ok (set by the worker) — never poll the network
-// client here, that would race the worker thread.
-static void update_global_status(void) {
-    if (!s_gstatus_label) return;
-    String s = "Server: ";
-    s += g_config.ledfx_url.length() ? g_config.ledfx_url : String("(unset)");
-    s += s_link_ok ? "\nLedFx: connected" : "\nLedFx: connecting…";
-    if (s_last_refresh_ms) {
-        s += "\nLast refresh: " + String((millis() - s_last_refresh_ms) / 1000) + "s ago";
-    } else {
-        s += "\nLast refresh: never";
-    }
-    lv_label_set_text(s_gstatus_label, s.c_str());
-}
-
-// Persistent WiFi indicator on the top layer: green when connected, amber while
-// connecting. Driven by s_link_ok (updated from RES_CONN).
-static void update_conn_indicator(void) {
-    if (!s_conn_dot) return;
-    lv_obj_set_style_text_color(s_conn_dot,
-        s_link_ok ? lv_color_hex(0x33cc66) : lv_color_hex(0xd8a11a), 0);
-}
-
-// Reflect server global state onto the Global-screen controls. Programmatic
-// state/value changes do not fire LV_EVENT_VALUE_CHANGED, so this can't loop
-// back into the command handlers.
-static void set_sw(lv_obj_t *sw, bool on) {
-    if (!sw) return;
-    if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
-    else    lv_obj_clear_state(sw, LV_STATE_CHECKED);
-}
-static void apply_globals_to_ui(const GlobalsState &g) {
-    if (!g.valid) return;
-    set_sw(s_pause_sw, g.paused);
-    if (g.has_flags) {
-        set_sw(s_mirror_sw, g.mirror);
-        set_sw(s_flip_sw, g.flip);
-    }
-    if (g.has_brightness) {
-        if (s_bright_slider) lv_slider_set_value(s_bright_slider, g.brightness, LV_ANIM_OFF);
-        if (s_bright_value)  lv_label_set_text_fmt(s_bright_value, "%d%%", g.brightness);
-    }
-}
+// The Global tab is built and managed by ui_global.{h,cpp}. This file just
+// owns s_pause_sw (created on the Virtuals tab in ui_init; the checked-state
+// is driven by ui_global_apply_state_with_pause() from the result pump) and
+// the reset-button handler (which lives here because it touches NVS).
 
 // Enqueue a refresh for whichever data screen is currently in front.
 static void request_active_screen(void) {
@@ -347,8 +244,8 @@ static void request_active_screen(void) {
 // Periodic refresh of the front data screen, plus a status tick.
 static void auto_refresh_cb(lv_timer_t *t) {
     (void)t;
-    update_global_status();
-    if (s_link_ok) request_active_screen();
+    ui_global_status_tick();
+    if (ui_global_link_ok()) request_active_screen();
 }
 
 // Drain the worker's result queue on the LVGL thread and repaint. This is the
@@ -383,7 +280,7 @@ static void result_pump_cb(lv_timer_t *t) {
                 if (r.status == 200) {
                     obj_show(s_virt_error, false);
                     render_virt_list();
-                    apply_globals_to_ui(r.globals);  // sync Global-screen controls
+                    ui_global_apply_state_with_pause(r.globals, s_pause_sw);
                 } else {
                     lv_obj_clean(s_virt_list);
                     if (s_virt_error)
@@ -397,10 +294,8 @@ static void result_pump_cb(lv_timer_t *t) {
                 ui_show_status(r.msg, r.status != 200);
                 break;
             case RES_CONN:
-                s_link_ok = r.connected;
                 ui_show_status(r.msg, !r.connected);
-                update_global_status();
-                update_conn_indicator();
+                ui_global_set_link(r.connected);
                 break;
         }
     }
@@ -432,39 +327,9 @@ static void reset_btn_cb(lv_event_t *e) {
     lv_obj_center(mbox);
 }
 
-// On-device panel backlight slider (separate from LedFx LED brightness).
-static void screen_bright_cb(lv_event_t *e) {
-    lv_obj_t *sl = lv_event_get_target(e);
-    s_screen_bright_pct = lv_slider_get_value(sl);   // 10..100
-    s_screen_bright = (uint8_t)(s_screen_bright_pct * 255 / 100);
-    if (!s_dimmed) display_set_backlight(s_screen_bright);
-}
-
-// Persist the panel brightness once the user finishes dragging (not on every
-// tick — that would hammer NVS).
-static void screen_bright_save_cb(lv_event_t *e) {
-    lv_obj_t *sl = lv_event_get_target(e);
-    config_store.save_screen_brightness((uint8_t)lv_slider_get_value(sl));
-}
-
-// Dim the panel after a period of no touch (burn-in + power); restore on touch.
-static void dim_tick_cb(lv_timer_t *t) {
-    (void)t;
-    uint32_t idle = lv_disp_get_inactive_time(NULL);
-    if (idle > DIM_TIMEOUT_MS && !s_dimmed) {
-        display_set_backlight(DIM_LEVEL);
-        s_dimmed = true;
-    } else if (idle <= DIM_TIMEOUT_MS && s_dimmed) {
-        display_set_backlight(s_screen_bright);
-        s_dimmed = false;
-    }
-}
-
-// Remove the one-shot boot splash overlay.
-static void splash_done_cb(lv_timer_t *t) {
-    lv_obj_t *splash = (lv_obj_t *)t->user_data;
-    if (splash) lv_obj_del(splash);  // timer auto-deletes (repeat count reached 0)
-}
+// On-device panel backlight slider (separate from LedFx LED brightness) +
+// auto-dim timer + boot splash overlay all live in ui_global.{h,cpp}.
+// See ui_global_build(), ui_global_install_overlays().
 
 // ---- Settings editor -------------------------------------------------------
 // Edit WiFi/LedFx settings in place (no captive-portal round trip). The
@@ -472,92 +337,11 @@ static void splash_done_cb(lv_timer_t *t) {
 // button on the Global screen. See ui_settings.h.
 
 static void build_global_screen(void) {
-    lv_obj_set_flex_flow(s_tab_global, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_all(s_tab_global, 16, 0);
+    // The Global tab itself is built by ui_global_build(); the Settings +
+    // Reset buttons stay here because Reset touches NVS, and Settings is
+    // wired to the button by ui_settings_register_button().
+    ui_global_build(s_tab_global);
 
-    // Brightness row
-    lv_obj_t *row = lv_obj_create(s_tab_global);
-    lv_obj_set_size(row, LV_PCT(100), 80);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, "Brightness");
-    s_bright_slider = lv_slider_create(row);
-    lv_obj_set_width(s_bright_slider, 400);
-    lv_slider_set_range(s_bright_slider, 0, 100);
-    lv_slider_set_value(s_bright_slider, 80, LV_ANIM_OFF);
-    lv_obj_add_event_cb(s_bright_slider, bright_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    s_bright_value = lv_label_create(row);
-    lv_label_set_text_fmt(s_bright_value, "%d%%", 80);
-
-    lv_obj_t *apply = lv_btn_create(row);
-    lv_obj_t *al = lv_label_create(apply);
-    lv_label_set_text(al, "Apply");
-    lv_obj_center(al);
-    lv_obj_add_event_cb(apply, bright_apply_cb, LV_EVENT_CLICKED, NULL);
-
-    // Mirror row
-    lv_obj_t *mrow = lv_obj_create(s_tab_global);
-    lv_obj_set_size(mrow, LV_PCT(100), 60);
-    lv_obj_set_flex_flow(mrow, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(mrow, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_t *ml = lv_label_create(mrow);
-    lv_label_set_text(ml, "Mirror");
-    s_mirror_sw = lv_switch_create(mrow);
-    lv_obj_add_event_cb(s_mirror_sw, mirror_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    lv_obj_t *frow = lv_obj_create(s_tab_global);
-    lv_obj_set_size(frow, LV_PCT(100), 60);
-    lv_obj_set_flex_flow(frow, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(frow, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_t *fl = lv_label_create(frow);
-    lv_label_set_text(fl, "Flip");
-    s_flip_sw = lv_switch_create(frow);
-    lv_obj_add_event_cb(s_flip_sw, flip_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    // Screen backlight (this panel, not the LEDs) — live, no Apply needed.
-    lv_obj_t *brow = lv_obj_create(s_tab_global);
-    lv_obj_set_size(brow, LV_PCT(100), 70);
-    lv_obj_set_flex_flow(brow, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(brow, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_t *sbl = lv_label_create(brow);
-    lv_label_set_text(sbl, "Screen brightness");
-    s_screen_bright_slider = lv_slider_create(brow);
-    lv_obj_set_width(s_screen_bright_slider, 400);
-    lv_slider_set_range(s_screen_bright_slider, 10, 100);
-    lv_slider_set_value(s_screen_bright_slider, s_screen_bright_pct, LV_ANIM_OFF);  // restored
-    lv_obj_add_event_cb(s_screen_bright_slider, screen_bright_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    lv_obj_add_event_cb(s_screen_bright_slider, screen_bright_save_cb, LV_EVENT_RELEASED, NULL);
-
-    // Gradient preset picker
-    lv_obj_t *grow = lv_obj_create(s_tab_global);
-    lv_obj_set_size(grow, LV_PCT(100), 70);
-    lv_obj_set_flex_flow(grow, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(grow, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_t *gl = lv_label_create(grow);
-    lv_label_set_text(gl, "Gradient");
-    lv_obj_t *dd = lv_dropdown_create(grow);
-    lv_obj_set_width(dd, 300);
-    // LedFx's built-in gradient keys (ledfx/color.py LEDFX_GRADIENTS). These
-    // must match exactly — LedFx rejects unknown names.
-    lv_dropdown_set_options(dd,
-        "Rainbow\nDancefloor\nPlasma\nOcean\nViridis\nJungle\n"
-        "Spring\nWinter\nFrost\nSunset\nBorealis\nRust\nWinamp");
-    lv_obj_add_event_cb(dd, gradient_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    // Connection / status row
-    s_gstatus_label = lv_label_create(s_tab_global);
-    lv_obj_set_width(s_gstatus_label, LV_PCT(100));
-    lv_obj_set_style_text_color(s_gstatus_label, lv_color_hex(0xaaaaaa), 0);
-    update_global_status();
-
-    // Settings + reset buttons on one row.
     lv_obj_t *btnrow = lv_obj_create(s_tab_global);
     lv_obj_set_size(btnrow, LV_PCT(100), 66);
     lv_obj_set_flex_flow(btnrow, LV_FLEX_FLOW_ROW);
@@ -587,16 +371,11 @@ static void tab_changed_cb(lv_event_t *e) {
     uint32_t idx = lv_tabview_get_tab_act(btns);
     if (idx == 0) request_scenes();
     if (idx == 1) request_virtuals();
-    if (idx == 2) { request_virtuals(); update_global_status(); }  // refresh globals
+    if (idx == 2) { request_virtuals(); ui_global_status_tick(); }  // refresh globals
 }
 
 // ---- Init ------------------------------------------------------------------
 void ui_init(void) {
-    // Restore the persisted panel brightness and apply it immediately.
-    s_screen_bright_pct = config_store.load_screen_brightness(100);
-    s_screen_bright = (uint8_t)(s_screen_bright_pct * 255 / 100);
-    display_set_backlight(s_screen_bright);
-
     s_root = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_root, lv_color_hex(0x0d0d14), 0);  // dark ground
     lv_scr_load(s_root);
@@ -666,12 +445,6 @@ void ui_init(void) {
 
     build_global_screen();
 
-    // Persistent WiFi link indicator on the top layer (always visible).
-    s_conn_dot = lv_label_create(lv_layer_top());
-    lv_label_set_text(s_conn_dot, LV_SYMBOL_WIFI);
-    lv_obj_align(s_conn_dot, LV_ALIGN_TOP_RIGHT, -12, 10);
-    update_conn_indicator();
-
     ui_show_status("Connecting to LedFx…");
 
     // Drain worker results (and repaint) on the LVGL thread.
@@ -682,25 +455,10 @@ void ui_init(void) {
     request_virtuals();
     // Keep the front data screen (and the status row) in sync with LedFx.
     lv_timer_create(auto_refresh_cb, AUTO_REFRESH_MS, NULL);
-    // Auto-dim the panel after a period of no touch.
-    lv_timer_create(dim_tick_cb, 1000, NULL);
 
-    // One-shot boot splash over everything, removed after ~1.2 s.
-    lv_obj_t *splash = lv_obj_create(lv_layer_top());
-    lv_obj_set_size(splash, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(splash, lv_color_hex(0x0a0a12), 0);
-    lv_obj_set_style_bg_opa(splash, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(splash, 0, 0);
-    lv_obj_clear_flag(splash, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t *stitle = lv_label_create(splash);
-    lv_label_set_text(stitle, LV_SYMBOL_HOME "  LedFx HMI");
-    lv_obj_center(stitle);
-    // repeat_count=1 makes LVGL auto-delete this timer after the splash overlay
-    // is removed (lv_timer_t::one_shot-style cleanup). Don't change it without
-    // also handling timer cleanup explicitly — a forever-loop timer with
-    // user_data pointing at a deleted splash object would crash on the next tick.
-    lv_timer_t *st = lv_timer_create(splash_done_cb, 1200, splash);
-    lv_timer_set_repeat_count(st, 1);
+    // Boot splash + auto-dim timer (both live in ui_global because they share
+    // the panel-backlight state with the Global-tab slider).
+    ui_global_install_overlays();
 }
 
 void ui_show_status(const char *msg, bool is_error) {
