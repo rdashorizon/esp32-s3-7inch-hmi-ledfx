@@ -147,9 +147,23 @@ int LedFxClient::clear_all_effects() {
     return net.put_json(_url("/api/effects"), body, resp);
 }
 
+// LedFx's /api/effects bulk actions (apply_global) return HTTP 200 even when
+// they reject the request, with {"status":"failed", ...} in the body. Treat
+// that as an error so the UI can report it instead of a false success.
+static int interpret_effects_result(int code, const String &resp) {
+    if (code != 200) return code;
+    StaticJsonDocument<256> doc;
+    if (deserializeJson(doc, resp) == DeserializationError::Ok) {
+        const char *status = doc["status"] | "";
+        if (strcmp(status, "failed") == 0) return 422;
+    }
+    return 200;
+}
+
 int LedFxClient::apply_global(const String &json) {
     String resp;
-    return net.put_json(_url("/api/effects"), json, resp);
+    int code = net.put_json(_url("/api/effects"), json, resp);
+    return interpret_effects_result(code, resp);
 }
 
 int LedFxClient::pause_all(bool paused) {
@@ -168,5 +182,6 @@ int LedFxClient::set_gradient(const String &name) {
     String body;
     serializeJson(doc, body);
     String resp;
-    return net.put_json(_url("/api/effects"), body, resp);
+    int code = net.put_json(_url("/api/effects"), body, resp);
+    return interpret_effects_result(code, resp);
 }

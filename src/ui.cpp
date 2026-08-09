@@ -492,7 +492,11 @@ static void build_global_screen(void) {
     lv_label_set_text(gl, "Gradient");
     lv_obj_t *dd = lv_dropdown_create(grow);
     lv_obj_set_width(dd, 300);
-    lv_dropdown_set_options(dd, "Rainbow\nSunset\nOcean\nForest\nFire\nFrost");
+    // LedFx's built-in gradient keys (ledfx/color.py LEDFX_GRADIENTS). These
+    // must match exactly — LedFx rejects unknown names.
+    lv_dropdown_set_options(dd,
+        "Rainbow\nDancefloor\nPlasma\nOcean\nViridis\nJungle\n"
+        "Spring\nWinter\nFrost\nSunset\nBorealis\nRust\nWinamp");
     lv_obj_add_event_cb(dd, gradient_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     // Connection / status row
