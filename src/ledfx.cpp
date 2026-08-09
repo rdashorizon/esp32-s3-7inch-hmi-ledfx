@@ -121,6 +121,13 @@ int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count, GlobalsState *glo
         if (!eff.isNull()) {
             out[i].effect_type = eff["type"] | "";
             out[i].effect_name = eff["name"] | "";
+            // Effect's gradient preset (if the effect uses one). Used by the
+            // Virtuals UI to color the per-row swatch. Some effects (e.g.
+            // SingleColor) don't have a gradient; the field is left empty.
+            JsonObject ec = eff["config"];
+            if (!ec.isNull()) {
+                out[i].gradient = ec["gradient"] | "";
+            }
             // Take mirror/flip from the first active effect as the
             // representative values (apply_global keeps them in sync). Brightness
             // is not here — it's the master global_brightness in /api/config.

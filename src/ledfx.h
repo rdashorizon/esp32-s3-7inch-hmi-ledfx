@@ -19,6 +19,7 @@ struct VirtualInfo {
     bool   active = false;
     String effect_type;        // empty if no effect
     String effect_name;
+    String gradient;           // active gradient preset name, if the effect uses one
     bool   streaming = false;
 };
 

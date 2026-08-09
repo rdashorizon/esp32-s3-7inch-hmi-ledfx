@@ -30,6 +30,26 @@ static void obj_show(lv_obj_t *o, bool show) {
     else      lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
 }
 
+// Map LedFx gradient preset name → representative RGB565 hex. These are
+// hand-picked "signature" colors so each gradient reads distinctly in a small
+// swatch; they don't try to be physically accurate to the full gradient.
+static uint32_t gradient_to_color(const String &name) {
+    if (name == "Rainbow")    return 0xff8800;  // orange
+    if (name == "Dancefloor") return 0xff00aa;  // magenta
+    if (name == "Plasma")     return 0xff22aa;  // pink
+    if (name == "Ocean")      return 0x0088ff;  // blue
+    if (name == "Viridis")    return 0x44cc66;  // green
+    if (name == "Jungle")     return 0x22cc44;  // forest green
+    if (name == "Spring")     return 0x66ee88;  // pale green
+    if (name == "Winter")     return 0xaaccff;  // icy blue
+    if (name == "Frost")      return 0xddeeff;  // pale cyan
+    if (name == "Sunset")     return 0xff5522;  // red-orange
+    if (name == "Borealis")   return 0x44ffaa;  // aurora green
+    if (name == "Rust")       return 0xcc4422;  // rust red
+    if (name == "Winamp")     return 0x88ff44;  // lime
+    return 0x666666;  // unknown → neutral gray
+}
+
 // ---- Event handlers --------------------------------------------------------
 static void virt_toggle(lv_event_t *e) {
     lv_obj_t *sw = lv_event_get_target(e);
@@ -80,6 +100,17 @@ static void render_virt_list(void) {
         }
         lv_obj_t *name = lv_label_create(row);
         lv_label_set_text_fmt(name, "%s\n%s", s_virt[i].name.c_str(), sub.c_str());
+
+        // Gradient preview swatch: 20×20 colored square between the name and
+        // the randomize button. Falls back to neutral gray when the virtual
+        // has no effect or uses a gradient we don't have a color for.
+        lv_obj_t *swatch = lv_obj_create(row);
+        lv_obj_set_size(swatch, 20, 20);
+        lv_obj_set_style_bg_color(swatch,
+            lv_color_hex(gradient_to_color(s_virt[i].gradient)), 0);
+        lv_obj_set_style_border_width(swatch, 1, 0);
+        lv_obj_set_style_border_color(swatch, lv_color_hex(0x444444), 0);
+        lv_obj_set_style_radius(swatch, 2, 0);
 
         lv_obj_t *dice = lv_btn_create(row);
         lv_obj_set_size(dice, 50, 50);
