@@ -12,6 +12,7 @@
 #include "net.h"
 #include "ledfx.h"
 #include "ui.h"
+#include "ui_theme.h"   // ui_theme_setup() — Tier 1.5: load saved theme before ui_init
 #include "worker.h"
 #include "ota.h"
 
@@ -44,6 +45,12 @@ void setup(void) {
     display_init();
     touch_init();
     lvgl_init();
+
+    // Load the saved theme from NVS into module-static state BEFORE ui_init
+    // so the very first paint uses the right palette (no flash of wrong
+    // theme). The Theme is module-static; per-screen apply_theme() hooks
+    // read from it when they build their widgets.
+    ui_theme_setup();
 
     if (!config_store.load(g_config)) {
         // No config yet — straight into the setup AP. The portal now services
