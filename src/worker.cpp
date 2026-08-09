@@ -75,10 +75,32 @@ static bool ensure_connected() {
     bool want_auth = g_config.ledfx_user.length() || g_config.ledfx_pass.length();
     if (want_auth && !net.has_token()) {
         Serial.println("[net] attempting LedFx login…");
-        if (g_ledfx.connect(g_config.ledfx_user, g_config.ledfx_pass))
-            Serial.println("[net] LedFx login ok");
-        else
-            Serial.println("[net] LedFx login failed — continuing without a token");
+        LoginStatus st = g_ledfx.connect(g_config.ledfx_user, g_config.ledfx_pass);
+        switch (st) {
+            case LoginStatus::OK:
+                Serial.println("[net] LedFx login ok");
+                break;
+            case LoginStatus::NOT_FOUND:
+                Serial.println("[net] LedFx login: /api/auth/login not found — "
+                               "mainline LedFx has no auth; continuing without a token");
+                post_conn(true, "LedFx: connected (no auth)");
+                return true;
+            case LoginStatus::BAD_CREDS:
+                Serial.println("[net] LedFx login: 401/403 — wrong username or password");
+                post_conn(false, "LedFx: wrong username/password");
+                return false;  // don't pretend the link is usable
+            case LoginStatus::TRANSPORT:
+                Serial.println("[net] LedFx login: transport error (DNS/connect/timeout)");
+                post_conn(false, "LedFx: unreachable");
+                return false;
+            case LoginStatus::INVALID_RESPONSE:
+                Serial.println("[net] LedFx login: 200 OK but body had no token — unexpected response");
+                post_conn(false, "LedFx: auth response invalid");
+                return false;
+            case LoginStatus::NOT_CONFIGURED:
+                // Shouldn't reach here — gated by want_auth above.
+                break;
+        }
     }
 
     post_conn(true, "Connected");

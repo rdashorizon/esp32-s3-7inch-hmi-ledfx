@@ -46,7 +46,7 @@ static void assert_spiram_allocator_works_once() {
     }
 }
 
-bool LedFxClient::connect(const String &user, const String &pass) {
+LoginStatus LedFxClient::connect(const String &user, const String &pass) {
     return net.login(_base, user, pass);
 }
 

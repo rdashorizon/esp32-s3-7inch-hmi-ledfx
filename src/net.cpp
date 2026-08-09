@@ -27,12 +27,13 @@ bool Net::connect_wifi(const String &ssid, const String &pass, uint32_t timeout_
     return true;
 }
 
-bool Net::login(const String &base_url, const String &user, const String &pass) {
+LoginStatus Net::login(const String &base_url, const String &user, const String &pass) {
     // Cache credentials so request() can re-auth on token expiry.
     _base = base_url;
     _user = user;
     _pass = pass;
-    if (WiFi.status() != WL_CONNECTED) return false;
+    if (WiFi.status() != WL_CONNECTED) return LoginStatus::TRANSPORT;
+
     HTTPClient http;
     String url = base_url + "/api/auth/login";
     http.begin(url);
@@ -47,23 +48,27 @@ bool Net::login(const String &base_url, const String &user, const String &pass) 
     serializeJson(doc, payload);
 
     int code = http.POST(payload);
-    if (code != 200) {
-        http.end();
-        _token = "";
-        return false;
-    }
     String resp = http.getString();
     http.end();
 
-    // LedFx returns either `{"token": "..."}` or `{"access_token": "..."}`.
+    // Map HTTP codes to LoginStatus. We only consider 200 OK here; everything
+    // else is one of the failure modes.
+    if (code == 404) { _token = ""; return LoginStatus::NOT_FOUND; }
+    if (code == 401 || code == 403) { _token = ""; return LoginStatus::BAD_CREDS; }
+    if (code != 200) { _token = ""; return LoginStatus::TRANSPORT; }
+
+    // 200 OK — must have a token in the body.
     StaticJsonDocument<512> r;
     if (deserializeJson(r, resp) != DeserializationError::Ok) {
         _token = "";
-        return false;
+        return LoginStatus::INVALID_RESPONSE;
     }
     _token = r["token"].as<String>();
     if (_token.isEmpty()) _token = r["access_token"].as<String>();
-    return _token.length() > 0;
+    if (_token.isEmpty()) {
+        return LoginStatus::INVALID_RESPONSE;
+    }
+    return LoginStatus::OK;
 }
 
 int Net::request(const char *method, const String &url, const String &body, String &resp) {
@@ -89,7 +94,7 @@ int Net::request(const char *method, const String &url, const String &body, Stri
 
         if ((code == 401 || code == 403) && attempt == 0 && _base.length()) {
             _token = "";
-            if (!login(_base, _user, _pass)) return code;  // re-auth failed
+            if (login(_base, _user, _pass) != LoginStatus::OK) return code;  // re-auth failed
             continue;                                        // retry once
         }
         return code;

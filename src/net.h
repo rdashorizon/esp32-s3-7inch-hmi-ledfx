@@ -6,14 +6,28 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
 
+// Login outcome. Distinguishing these lets the UI surface "wrong password"
+// (action needed) from "mainline LedFx has no auth endpoint" (silent — the
+// data fetches will just work tokenless). Note: NOT_CONFIGURED is named to
+// avoid colliding with the Arduino framework's #define DISABLED.
+enum class LoginStatus {
+    OK,                // 200 + token returned
+    NOT_CONFIGURED,    // no credentials configured — don't even try
+    NOT_FOUND,         // 404 — mainline LedFx, no /api/auth/login endpoint
+    BAD_CREDS,         // 401/403 — wrong username/password (user action needed)
+    TRANSPORT,         // connect failed, timeout, DNS, etc.
+    INVALID_RESPONSE,  // 200 but body wasn't parseable as JSON / no token field
+};
+
 class Net {
 public:
     bool connect_wifi(const String &ssid, const String &pass, uint32_t timeout_ms = 15000);
     bool wifi_connected() const { return WiFi.status() == WL_CONNECTED; }
 
-    // Login against the LedFx server. Returns true on success and caches
-    // the bearer token for subsequent calls.
-    bool login(const String &base_url, const String &user, const String &pass);
+    // Login against the LedFx server. Returns the outcome; on OK the bearer
+    // token is cached for subsequent calls. Credentials are also cached so a
+    // later 401/403 can trigger a re-auth attempt.
+    LoginStatus login(const String &base_url, const String &user, const String &pass);
 
     bool has_token() const { return _token.length() > 0; }
     const String &token() const { return _token; }

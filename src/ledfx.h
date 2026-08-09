@@ -41,7 +41,8 @@ public:
     LedFxClient() = default;
     void set_base_url(const String &url) { _base = url; }
 
-    bool connect(const String &user, const String &pass);   // performs /api/auth/login
+    // Performs /api/auth/login and returns the outcome (see LoginStatus in net.h).
+    LoginStatus connect(const String &user, const String &pass);
 
     // Returns 0 on success, HTTP status on failure.
     int fetch_scenes(SceneInfo *&out, int &count);
