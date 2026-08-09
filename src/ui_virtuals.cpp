@@ -5,7 +5,7 @@
 // submit worker requests and let the result pump repaint.
 // ---------------------------------------------------------------------------
 #include "ui_virtuals.h"
-#include "ui.h"         // ui_show_status
+#include "ui.h"         // ui_show_status, ui_submit (for the overlay)
 #include "worker.h"     // worker_submit, req_*, REQ_*
 #include "ui_global.h"  // ui_global_mark_refreshed, ui_global_apply_state_with_pause
 #include <Arduino.h>    // millis
@@ -36,26 +36,26 @@ static void virt_toggle(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_obj_get_user_data(sw);
     if (idx < 0 || idx >= s_virt_count) return;
     bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    worker_submit(req_id(REQ_SET_VIRTUAL_ACTIVE, s_virt[idx].id, on));
+    ui_submit(req_id(REQ_SET_VIRTUAL_ACTIVE, s_virt[idx].id, on));
 }
 
 static void virt_randomize(lv_event_t *e) {
     lv_obj_t *btn = lv_event_get_target(e);
     int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
     if (idx < 0 || idx >= s_virt_count) return;
-    worker_submit(req_id(REQ_RANDOMIZE_VIRTUAL, s_virt[idx].id));
+    ui_submit(req_id(REQ_RANDOMIZE_VIRTUAL, s_virt[idx].id));
     ui_show_status_fmt(false, "Randomizing: %s", s_virt[idx].name.c_str());
 }
 
 static void clear_all_cb(lv_event_t *e) {
     (void)e;
-    worker_submit(req_simple(REQ_CLEAR_ALL));
+    ui_submit(req_simple(REQ_CLEAR_ALL));
 }
 
 static void pause_all_cb(lv_event_t *e) {
     lv_obj_t *sw = lv_event_get_target(e);
     bool paused = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    worker_submit(req_flag(REQ_PAUSE_ALL, paused));
+    ui_submit(req_flag(REQ_PAUSE_ALL, paused));
 }
 
 // ---- Paint -----------------------------------------------------------------
@@ -142,7 +142,7 @@ void ui_virtuals_build(lv_obj_t *parent) {
 }
 
 void ui_virtuals_request_refresh(void) {
-    if (worker_submit(req_simple(REQ_FETCH_VIRTUALS))) {
+    if (ui_submit(req_simple(REQ_FETCH_VIRTUALS))) {
         obj_show(s_virt_spinner, true);
         obj_show(s_virt_error, false);
         ui_show_status("Refreshing virtuals…");

@@ -33,6 +33,7 @@
 #include "ui_global.h"    // Global tab + dim + splash + conn indicator
 #include "ui_scenes.h"    // Scenes tab
 #include "ui_virtuals.h"  // Virtuals tab + pause-all switch
+#include "ui_overlay.h"   // slow-network overlay
 #include <ArduinoJson.h>
 #include <stdarg.h>       // va_list for ui_show_status_fmt()
 
@@ -85,7 +86,9 @@ static void auto_refresh_cb(lv_timer_t *t) {
 static void result_pump_cb(lv_timer_t *t) {
     (void)t;
     Result r;
+    bool got_any = false;
     while (worker_poll(r)) {
+        got_any = true;
         switch (r.type) {
             case RES_SCENES:
                 ui_scenes_pump_result(r.status, r.count,
@@ -105,6 +108,7 @@ static void result_pump_cb(lv_timer_t *t) {
                 break;
         }
     }
+    if (got_any) ui_overlay_mark_progress();
 }
 
 // Confirmation handler for the "Reset settings" button.
@@ -217,6 +221,10 @@ void ui_init(void) {
     // Boot splash + auto-dim timer (both live in ui_global because they share
     // the panel-backlight state with the Global-tab slider).
     ui_global_install_overlays();
+
+    // Slow-network overlay (top-layer "still working…" after 1.5 s of
+    // submit-with-no-progress). See ui_overlay.h.
+    ui_overlay_install();
 }
 
 void ui_show_status(const char *msg, bool is_error) {
@@ -239,5 +247,11 @@ void ui_show_status_fmt(bool is_error, const char *fmt, ...) {
 
 void ui_refresh_scenes(void)   { ui_scenes_request_refresh(); }
 void ui_refresh_virtuals(void) { ui_virtuals_request_refresh(); }
+
+bool ui_submit(const Request &req) {
+    bool ok = worker_submit(req);
+    if (ok) ui_overlay_mark_submit();
+    return ok;
+}
 
 lv_obj_t *ui_root(void) { return s_root; }

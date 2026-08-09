@@ -5,7 +5,7 @@
 // submit worker requests and let the result pump repaint.
 // ---------------------------------------------------------------------------
 #include "ui_global.h"
-#include "ui.h"           // ui_show_status
+#include "ui.h"           // ui_show_status, ui_submit (for the overlay)
 #include "config.h"       // g_config, config_store
 #include "display.h"      // display_set_backlight
 #include "worker.h"       // worker_submit, req_*, REQ_*
@@ -50,7 +50,7 @@ static void bright_slider_cb(lv_event_t *e) {
 static void submit_global(const JsonDocument &doc) {
     String body;
     serializeJson(doc, body);
-    worker_submit(req_payload(REQ_APPLY_GLOBAL, body));
+    ui_submit(req_payload(REQ_APPLY_GLOBAL, body));
 }
 
 static void bright_apply_cb(lv_event_t *e) {
@@ -58,7 +58,7 @@ static void bright_apply_cb(lv_event_t *e) {
     // Drive LedFx's master global_brightness (config), so it matches the main
     // LedFx brightness and dims the whole installation.
     int v = lv_slider_get_value(s_bright_slider);
-    worker_submit(req_arg(REQ_SET_BRIGHTNESS, v));
+    ui_submit(req_arg(REQ_SET_BRIGHTNESS, v));
     ui_show_status("Applying brightness…");
 }
 
@@ -82,7 +82,7 @@ static void gradient_cb(lv_event_t *e) {
     lv_obj_t *dd = lv_event_get_target(e);
     char buf[32] = {0};
     lv_dropdown_get_selected_str(dd, buf, sizeof(buf));
-    worker_submit(req_payload(REQ_SET_GRADIENT, String(buf)));
+    ui_submit(req_payload(REQ_SET_GRADIENT, String(buf)));
     ui_show_status_fmt(false, "Gradient: %s", buf);
 }
 

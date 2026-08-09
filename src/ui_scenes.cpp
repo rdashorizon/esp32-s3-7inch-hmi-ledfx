@@ -5,7 +5,7 @@
 // submit worker requests and let the result pump repaint.
 // ---------------------------------------------------------------------------
 #include "ui_scenes.h"
-#include "ui.h"        // ui_show_status, ui_global_mark_refreshed
+#include "ui.h"        // ui_show_status, ui_submit (for the overlay), ui_global_mark_refreshed
 #include "worker.h"    // worker_submit, REQ_*
 #include "ui_global.h" // ui_global_mark_refreshed
 #include <Arduino.h>   // millis
@@ -36,7 +36,7 @@ static void scene_btn_clicked(lv_event_t *e) {
     lv_obj_t *btn = lv_event_get_target(e);
     int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
     if (idx < 0 || idx >= s_scene_count) return;
-    worker_submit(req_id(REQ_ACTIVATE_SCENE, s_scenes[idx].id));
+    ui_submit(req_id(REQ_ACTIVATE_SCENE, s_scenes[idx].id));
     ui_show_status_fmt(false, "Activating: %s", s_scenes[idx].name.c_str());
 }
 
@@ -44,7 +44,7 @@ static void scene_btn_long(lv_event_t *e) {
     lv_obj_t *btn = lv_event_get_target(e);
     int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
     if (idx < 0 || idx >= s_scene_count) return;
-    worker_submit(req_id(REQ_DEACTIVATE_SCENE, s_scenes[idx].id));
+    ui_submit(req_id(REQ_DEACTIVATE_SCENE, s_scenes[idx].id));
     ui_show_status_fmt(false, "Deactivating: %s", s_scenes[idx].name.c_str());
 }
 
@@ -103,7 +103,7 @@ void ui_scenes_build(lv_obj_t *parent) {
 }
 
 void ui_scenes_request_refresh(void) {
-    if (worker_submit(req_simple(REQ_FETCH_SCENES))) {
+    if (ui_submit(req_simple(REQ_FETCH_SCENES))) {
         obj_show(s_scene_spinner, true);
         obj_show(s_scene_error, false);
         ui_show_status("Refreshing scenes…");
