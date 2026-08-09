@@ -96,6 +96,19 @@ static void virt_row_long(lv_event_t *e) {
     lv_obj_center(mbox);
 }
 
+// Forward decls for the per-virtual color modal (Task 1.4 fills in the
+// build; Task 1.3 just stubs the entry point so the click handler can wire).
+static void open_virtual_color_modal(int idx);
+
+// Tap on a row's gradient swatch → open the per-virtual color picker modal.
+// The actual build is in open_virtual_color_modal (Task 1.4 fills it in).
+static void swatch_clicked(lv_event_t *e) {
+    lv_obj_t *swatch = lv_event_get_target(e);
+    int idx = (int)(intptr_t)lv_obj_get_user_data(swatch);
+    if (idx < 0 || idx >= s_virt_count) return;
+    open_virtual_color_modal(idx);
+}
+
 static void clear_all_cb(lv_event_t *e) {
     (void)e;
     ui_submit(req_simple(REQ_CLEAR_ALL));
@@ -135,7 +148,8 @@ static void render_virt_list(void) {
 
         // Gradient preview swatch: 20×20 colored square between the name and
         // the randomize button. Falls back to neutral gray when the virtual
-        // has no effect or uses a gradient we don't have a color for.
+        // has no effect or uses a gradient we don't have a color for. Tap
+        // → open the per-virtual color picker modal (Task 1.4).
         lv_obj_t *swatch = lv_obj_create(row);
         lv_obj_set_size(swatch, 20, 20);
         lv_obj_set_style_bg_color(swatch,
@@ -143,6 +157,8 @@ static void render_virt_list(void) {
         lv_obj_set_style_border_width(swatch, 1, 0);
         lv_obj_set_style_border_color(swatch, lv_color_hex(0x444444), 0);
         lv_obj_set_style_radius(swatch, 2, 0);
+        lv_obj_set_user_data(swatch, (void *)(intptr_t)i);
+        lv_obj_add_event_cb(swatch, swatch_clicked, LV_EVENT_CLICKED, NULL);
 
         lv_obj_t *dice = lv_btn_create(row);
         lv_obj_set_size(dice, 50, 50);
@@ -211,6 +227,11 @@ void ui_virtuals_request_refresh(void) {
         ui_show_status("Refreshing virtuals…");
     }
 }
+
+// Stub — Task 1.4 replaces this with the full modal build (colorwheel +
+// RGB sliders + swatch + Apply/Black/Cancel). Kept as a stub here so the
+// click handler in this task compiles and runs without doing anything yet.
+static void open_virtual_color_modal(int idx) { (void)idx; }
 
 void ui_virtuals_pump_result(int status, int count, VirtualInfo *data,
                              const GlobalsState &globals, const char *err) {
