@@ -9,6 +9,7 @@
 #include "net.h"
 #include "config.h"
 
+#include <WiFi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -55,22 +56,31 @@ static void post_data(ResType type, int status, void *data, int count, const cha
 }
 
 // ---- Connection management -------------------------------------------------
-// Ensure WiFi is up and we hold a token. Reports state transitions via RES_CONN.
+// Ensure the link is usable. "Connected" means WiFi is up: LedFx authentication
+// is OPTIONAL (mainline LedFx has no login endpoint), so we only try to log in
+// when the user supplied credentials, and never block the API on it. A real
+// 401/403 from a data endpoint is surfaced later by the fetch itself.
 static bool ensure_connected() {
-    if (net.wifi_connected() && net.has_token()) return true;
-
     if (!net.wifi_connected()) {
+        Serial.printf("[net] WiFi connecting to \"%s\"…\n", g_config.wifi_ssid.c_str());
         if (!net.connect_wifi(g_config.wifi_ssid, g_config.wifi_pass)) {
+            Serial.println("[net] WiFi connect failed");
             post_conn(false, "WiFi: connecting…");
             return false;
         }
+        Serial.print("[net] WiFi up, IP ");
+        Serial.println(WiFi.localIP());
     }
-    if (!net.has_token()) {
-        if (!g_ledfx.connect(g_config.ledfx_user, g_config.ledfx_pass)) {
-            post_conn(false, "LedFx: login failed");
-            return false;
-        }
+
+    bool want_auth = g_config.ledfx_user.length() || g_config.ledfx_pass.length();
+    if (want_auth && !net.has_token()) {
+        Serial.println("[net] attempting LedFx login…");
+        if (g_ledfx.connect(g_config.ledfx_user, g_config.ledfx_pass))
+            Serial.println("[net] LedFx login ok");
+        else
+            Serial.println("[net] LedFx login failed — continuing without a token");
     }
+
     post_conn(true, "Connected");
     return true;
 }
@@ -80,6 +90,7 @@ static void do_fetch_scenes() {
     SceneInfo *arr = nullptr;
     int n = 0;
     int code = g_ledfx.fetch_scenes(arr, n);
+    Serial.printf("[net] GET /api/scenes -> HTTP %d, %d scenes\n", code, n);
     post_data(RES_SCENES, code, arr, n, "Failed to fetch scenes");
 }
 
@@ -87,6 +98,7 @@ static void do_fetch_virtuals() {
     VirtualInfo *arr = nullptr;
     int n = 0;
     int code = g_ledfx.fetch_virtuals(arr, n);
+    Serial.printf("[net] GET /api/virtuals -> HTTP %d, %d virtuals\n", code, n);
     post_data(RES_VIRTUALS, code, arr, n, "Failed to fetch virtuals");
 }
 
@@ -99,7 +111,11 @@ static void handle(const Request &req) {
 
     switch (req.type) {
         case REQ_CONNECT:
-            // ensure_connected() already reported success.
+            // ensure_connected() (above) already logged + reported success.
+            Serial.printf("[net] base_url=\"%s\", auth=%s\n",
+                          g_config.ledfx_url.c_str(),
+                          (g_config.ledfx_user.length() || g_config.ledfx_pass.length())
+                              ? "yes" : "none");
             break;
 
         case REQ_FETCH_SCENES:
