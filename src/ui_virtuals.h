@@ -27,3 +27,9 @@ void ui_virtuals_request_refresh(void);
 // switch stays in sync with the server.
 void ui_virtuals_pump_result(int status, int count, VirtualInfo *data,
                              const GlobalsState &globals, const char *err);
+
+// Adopt the result of any RES_ACTION while the Virtuals tab is in front
+// (Tier 1.6). On non-200, shows a transient error banner on the tab so the
+// user notices a color-set or toggle failure without checking the bottom
+// status label.
+void ui_virtuals_pump_action_result(int status, const char *msg);

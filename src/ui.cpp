@@ -111,6 +111,12 @@ static void result_pump_cb(lv_timer_t *t) {
                 if (lv_tabview_get_tab_act(s_tabview) == 2) {
                     ui_color_pump_result(r.status, r.msg);
                 }
+                // Same pattern for the Virtuals tab (Tier 1.6) — covers
+                // color-set failures, randomize failures, clear-all failures,
+                // and toggle-virtual failures. Tab index 1 = Virtuals.
+                else if (lv_tabview_get_tab_act(s_tabview) == 1) {
+                    ui_virtuals_pump_action_result(r.status, r.msg);
+                }
                 break;
             case RES_CONN:
                 ui_show_status(r.msg, !r.connected);

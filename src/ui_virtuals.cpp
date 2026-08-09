@@ -34,6 +34,13 @@ static lv_obj_t *s_modal_slider_r, *s_modal_slider_g, *s_modal_slider_b;
 static lv_obj_t *s_modal_label_r, *s_modal_label_g, *s_modal_label_b;
 static lv_obj_t *s_modal_swatch;
 
+// Transient error banner (Tier 1.6). Hidden by default; shown by
+// pump_result on a non-200 REQ_SET_VIRTUAL_COLOR (or any other RES_ACTION
+// while the Virtuals tab is in front).
+static lv_obj_t *s_banner = nullptr;
+static lv_timer_t *s_banner_timer = nullptr;
+static const uint32_t BANNER_TIMEOUT_MS = 3000;
+
 // ---- Helpers ---------------------------------------------------------------
 static void obj_show(lv_obj_t *o, bool show) {
     if (!o) return;
@@ -208,6 +215,19 @@ void ui_virtuals_build(lv_obj_t *parent) {
     lv_obj_set_style_text_color(s_virt_error, lv_color_hex(0xff6666), 0);
     lv_obj_center(s_virt_error);
     lv_obj_add_flag(s_virt_error, LV_OBJ_FLAG_HIDDEN);
+
+    // Tier 1.6: transient action-result banner. Positioned just above the
+    // bottom toolbar so it's visible without overlapping the toggle rows.
+    s_banner = lv_label_create(parent);
+    lv_obj_set_width(s_banner, LV_PCT(100) - 32);
+    lv_obj_align(s_banner, LV_ALIGN_BOTTOM_MID, 0, -76);  // above the toolbar
+    lv_obj_set_style_text_color(s_banner, lv_color_hex(0xff8888), 0);
+    lv_obj_set_style_bg_color(s_banner, lv_color_hex(0x331111), 0);
+    lv_obj_set_style_bg_opa(s_banner, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(s_banner, 8, 0);
+    lv_obj_set_style_radius(s_banner, 4, 0);
+    lv_label_set_text(s_banner, "");
+    lv_obj_add_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
 
     // Clear-all button on virtuals screen
     lv_obj_t *clear_btn = lv_btn_create(parent);
@@ -445,6 +465,40 @@ static void open_virtual_color_modal(int idx) {
     lv_label_set_text(al, LV_SYMBOL_OK "  Apply");
     lv_obj_center(al);
     lv_obj_add_event_cb(apply, modal_apply_cb, LV_EVENT_CLICKED, NULL);
+}
+
+// ---- Transient banner (Tier 1.6) -----------------------------------------
+static void banner_hide_cb(lv_timer_t *t) {
+    (void)t;
+    if (s_banner) lv_obj_add_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
+    if (s_banner_timer) {
+        lv_timer_del(s_banner_timer);
+        s_banner_timer = nullptr;
+    }
+}
+
+static void banner_show(const char *msg) {
+    if (!s_banner) return;
+    lv_label_set_text(s_banner, msg);
+    lv_obj_clear_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
+    if (s_banner_timer) lv_timer_del(s_banner_timer);
+    s_banner_timer = lv_timer_create(banner_hide_cb, BANNER_TIMEOUT_MS, NULL);
+    lv_timer_set_repeat_count(s_banner_timer, 1);
+}
+
+void ui_virtuals_pump_action_result(int status, const char *msg) {
+    if (status != 200 && msg && msg[0]) {
+        char buf[96];
+        snprintf(buf, sizeof(buf), LV_SYMBOL_WARNING "  %s", msg);
+        banner_show(buf);
+    } else if (s_banner) {
+        // Success — dismiss any prior error banner immediately.
+        lv_obj_add_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
+        if (s_banner_timer) {
+            lv_timer_del(s_banner_timer);
+            s_banner_timer = nullptr;
+        }
+    }
 }
 
 void ui_virtuals_pump_result(int status, int count, VirtualInfo *data,
