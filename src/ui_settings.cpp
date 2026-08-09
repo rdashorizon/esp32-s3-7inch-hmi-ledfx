@@ -11,6 +11,7 @@
 #include "ui.h"         // for ui_show_status, ui_root
 #include "config.h"     // g_config, config_store, config_url_is_valid
 #include "worker.h"     // req_test_connection
+#include "ui_theme.h"   // ui_theme_*() palette accessors (Tier 1.6)
 #include <Arduino.h>    // ESP.restart, delay
 #include <lvgl.h>
 
@@ -98,7 +99,8 @@ static void settings_test_cb(lv_event_t *e) {
 
 static void settings_open(void) {
     s_settings_scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(s_settings_scr, lv_color_hex(0x0d0d14), 0);
+    lv_obj_set_style_bg_color(s_settings_scr,
+        lv_color_hex(ui_theme_root_bg()), 0);
     lv_obj_clear_flag(s_settings_scr, LV_OBJ_FLAG_SCROLLABLE);
 
     // Header: Back / title / Test / Save
@@ -112,11 +114,13 @@ static void settings_open(void) {
     lv_obj_add_event_cb(back, settings_back_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *ttl = lv_label_create(hdr); lv_label_set_text(ttl, "Settings");
     lv_obj_t *test = lv_btn_create(hdr);
-    lv_obj_set_style_bg_color(test, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_bg_color(test,
+        lv_color_hex(ui_theme_panel_alt()), 0);
     lv_obj_t *tl = lv_label_create(test); lv_label_set_text(tl, LV_SYMBOL_REFRESH " Test"); lv_obj_center(tl);
     lv_obj_add_event_cb(test, settings_test_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *save = lv_btn_create(hdr);
-    lv_obj_set_style_bg_color(save, lv_color_hex(0x2266cc), 0);
+    lv_obj_set_style_bg_color(save,
+        lv_color_hex(ui_theme_accent_rgb565()), 0);
     lv_obj_t *svl = lv_label_create(save); lv_label_set_text(svl, LV_SYMBOL_SAVE " Save"); lv_obj_center(svl);
     lv_obj_add_event_cb(save, settings_save_cb, LV_EVENT_CLICKED, NULL);
 

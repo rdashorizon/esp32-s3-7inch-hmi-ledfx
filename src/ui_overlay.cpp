@@ -33,6 +33,10 @@ static void overlay_hide(void) {
 
 static void build_overlay(void) {
     // Translucent dim over the entire screen with a centered label.
+    // Colors here are intentionally theme-neutral (black backdrop + white
+    // label) — the overlay is a veil meant to read on top of whatever
+    // tab/accent is currently in front. Theme-aware re-styling would
+    // break that contract.
     s_overlay = lv_obj_create(lv_layer_top());
     lv_obj_set_size(s_overlay, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_color(s_overlay, lv_color_hex(0x000000), 0);
