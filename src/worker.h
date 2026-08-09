@@ -15,19 +15,20 @@
 #include "ledfx.h"   // SceneInfo / VirtualInfo
 
 enum ReqType : uint8_t {
-    REQ_CONNECT,             // (re)connect WiFi + login, report status
-    REQ_TEST_CONNECTION,     // one-shot WiFi + LedFx URL probe (settings editor)
+    REQ_CONNECT,                // (re)connect WiFi + login, report status
+    REQ_TEST_CONNECTION,        // one-shot WiFi + LedFx URL probe (settings editor)
     REQ_FETCH_SCENES,
     REQ_FETCH_VIRTUALS,
-    REQ_ACTIVATE_SCENE,      // id
-    REQ_DEACTIVATE_SCENE,    // id
-    REQ_SET_VIRTUAL_ACTIVE,  // id + flag
-    REQ_RANDOMIZE_VIRTUAL,   // id
+    REQ_ACTIVATE_SCENE,         // id
+    REQ_DEACTIVATE_SCENE,       // id
+    REQ_SET_VIRTUAL_ACTIVE,     // id + flag
+    REQ_SET_VIRTUAL_COLOR,      // id + effect + payload(hex color)
+    REQ_RANDOMIZE_VIRTUAL,      // id
     REQ_CLEAR_ALL,
-    REQ_PAUSE_ALL,           // flag
-    REQ_APPLY_GLOBAL,        // payload = json body
-    REQ_SET_GRADIENT,        // payload = preset name
-    REQ_SET_BRIGHTNESS,      // arg = 0..100 (global_brightness %)
+    REQ_PAUSE_ALL,              // flag
+    REQ_APPLY_GLOBAL,           // payload = json body
+    REQ_SET_GRADIENT,           // payload = preset name
+    REQ_SET_BRIGHTNESS,         // arg = 0..100 (global_brightness %)
 };
 
 // Fixed buffers (no heap-owning members) so the struct is safe to copy by
@@ -36,8 +37,11 @@ struct Request {
     ReqType type;
     bool    flag;
     int     arg;
-    char    id[48];
-    char    payload[224];
+    char    id[48];       // virtual id (or scene id, etc.)
+    char    effect[16];   // effect type for REQ_SET_VIRTUAL_COLOR
+    char    payload[208]; // hex color for REQ_SET_VIRTUAL_COLOR; or
+                          // gradient name / apply_global body / url+creds
+                          // for REQ_TEST_CONNECTION
 };
 
 enum ResType : uint8_t {

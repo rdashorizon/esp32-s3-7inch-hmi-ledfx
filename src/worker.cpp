@@ -235,6 +235,12 @@ static void handle(const Request &req) {
             do_fetch_virtuals();
             break;
         }
+        case REQ_SET_VIRTUAL_COLOR: {
+            int c = g_ledfx.set_virtual_color(req.id, req.effect, req.payload);
+            post_action(c, c == 200 ? "Color set" : "Color set failed");
+            do_fetch_virtuals();  // reflect new background_color in the UI
+            break;
+        }
         case REQ_RANDOMIZE_VIRTUAL: {
             int c = g_ledfx.randomize_virtual(req.id);
             post_action(c, c == 200 ? "Randomized" : "Randomize failed");
@@ -348,5 +354,15 @@ Request req_test_connection(const String &url, const String &user, const String 
     String body;
     serializeJson(doc, body);
     strncpy(r.payload, body.c_str(), sizeof(r.payload) - 1);
+    return r;
+}
+
+Request req_set_virtual_color(const String &id, const String &type,
+                              const String &color_hex) {
+    Request r{};
+    r.type = REQ_SET_VIRTUAL_COLOR;
+    strncpy(r.id, id.c_str(), sizeof(r.id) - 1);
+    strncpy(r.effect, type.c_str(), sizeof(r.effect) - 1);
+    strncpy(r.payload, color_hex.c_str(), sizeof(r.payload) - 1);
     return r;
 }
