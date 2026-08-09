@@ -67,6 +67,35 @@ static void virt_randomize(lv_event_t *e) {
     ui_show_status_fmt(false, "Randomizing: %s", s_virt[idx].name.c_str());
 }
 
+// Long-press on a row opens a small "what's this" dialog with the virtual's
+// id, effect type, effect name, and gradient. Power-user / debug aid.
+static void virt_row_long(lv_event_t *e) {
+    lv_obj_t *row = lv_event_get_target(e);
+    int idx = (int)(intptr_t)lv_obj_get_user_data(row);
+    if (idx < 0 || idx >= s_virt_count) return;
+    const VirtualInfo &v = s_virt[idx];
+    String body;
+    body.reserve(160);
+    body += "id: ";
+    body += v.id;
+    body += "\nactive: ";
+    body += v.active ? "yes" : "no";
+    body += "\neffect: ";
+    body += v.effect_type.isEmpty() ? "(none)" : v.effect_type;
+    if (!v.effect_name.isEmpty() && v.effect_name != v.effect_type) {
+        body += " (";
+        body += v.effect_name;
+        body += ")";
+    }
+    if (!v.gradient.isEmpty()) {
+        body += "\ngradient: ";
+        body += v.gradient;
+    }
+    static const char *btns[] = {"Close", ""};
+    lv_obj_t *mbox = lv_msgbox_create(NULL, v.name.c_str(), body.c_str(), btns, true);
+    lv_obj_center(mbox);
+}
+
 static void clear_all_cb(lv_event_t *e) {
     (void)e;
     ui_submit(req_simple(REQ_CLEAR_ALL));
@@ -88,6 +117,9 @@ static void render_virt_list(void) {
         lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
                               LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        // Long-press the row to inspect; the row owns the user_data index.
+        lv_obj_set_user_data(row, (void *)(intptr_t)i);
+        lv_obj_add_event_cb(row, virt_row_long, LV_EVENT_LONG_PRESSED, NULL);
 
         // Subtitle: effect type, plus the effect's display name when it adds info.
         String sub;
