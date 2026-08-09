@@ -183,6 +183,21 @@ int LedFxClient::randomize_virtual(const String &id) {
     return net.put_json(_url("/api/virtuals/" + id + "/effects"), body, resp);
 }
 
+int LedFxClient::set_virtual_color(const String &id, const String &type,
+                                   const String &color_hex) {
+    // PUT /api/virtuals/{id}/effects with {type, config:{background_color}}.
+    // LedFx merges the config into the effect; other fields are preserved.
+    // Confirmed against LedFx/docs/apis/api.md.
+    StaticJsonDocument<160> doc;
+    doc["type"] = type;
+    JsonObject cfg = doc.createNestedObject("config");
+    cfg["background_color"] = color_hex;
+    String body;
+    serializeJson(doc, body);
+    String resp;
+    return net.put_json(_url("/api/virtuals/" + id + "/effects"), body, resp);
+}
+
 int LedFxClient::clear_all_effects() {
     StaticJsonDocument<64> doc;
     doc["action"] = "clear_all_effects";

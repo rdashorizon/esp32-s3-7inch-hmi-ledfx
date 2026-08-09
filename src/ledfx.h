@@ -56,6 +56,12 @@ public:
     int set_virtual_active(const String &id, bool active);
     int randomize_virtual(const String &id);
 
+    // Set just the background_color of a virtual's currently-active effect,
+    // preserving all other config. `type` must match the virtual's active
+    // effect (the caller reads it from VirtualInfo.effect_type). `color_hex`
+    // is a CSS-style color string (e.g. "#ff8040"); LedFx validates it.
+    int set_virtual_color(const String &id, const String &type, const String &color_hex);
+
     int clear_all_effects();
     int apply_global(const String &json);
 
