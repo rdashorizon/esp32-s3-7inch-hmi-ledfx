@@ -43,6 +43,9 @@ Four screens behind a top tab bar (the last-selected tab persists in NVS):
 - Per-row: name, active effect type, 20×20 gradient preview swatch, ON/OFF toggle, 🎲 randomize
 - Top toolbar: pause-all toggle, clear-all-effects button
 - Long-press a row → inspect (msgbox with id / active / effect / gradient)
+- **Tap the gradient swatch → per-virtual color picker modal** (see §13).
+  Sends `PUT /api/virtuals/{id}/effects` with just the `background_color`,
+  preserving all other effect config
 
 ### Screen 3 — Color
 - LVGL colorwheel (HSV) + R/G/B sliders (0–255)
@@ -77,6 +80,7 @@ Four screens behind a top tab bar (the last-selected tab persists in NVS):
 | `PUT`  | `/api/virtuals` `{paused:bool}` | Pause/resume all virtual output |
 | `PUT`  | `/api/virtuals/{id}` `{active:bool}` | Toggle virtual |
 | `PUT`  | `/api/virtuals/{id}/effects` `{config:"RANDOMIZE"}` | Randomize |
+| `PUT`  | `/api/virtuals/{id}/effects` `{type, config:{background_color:"#rrggbb"}}` | Set per-virtual color (see §13) |
 | `PUT`  | `/api/effects` `{action:"clear_all_effects"}` | Clear all |
 | `PUT`  | `/api/effects` `{action:"apply_global", background_color:"#rrggbb"}` | Set global LED color |
 | `PUT`  | `/api/effects` `{action:"apply_global", gradient:"Rainbow"}` | Set global gradient |
@@ -111,7 +115,7 @@ src/
                         slider + auto-dim + boot splash
   ui_scenes.{h,cpp}     Scenes tab (4-column grid, scrollable)
   ui_virtuals.{h,cpp}   Virtuals tab (list + pause-all toolbar + clear-all +
-                        long-press inspect)
+                        long-press inspect + per-virtual color modal — see §13)
   ui_color.{h,cpp}      Color picker tab (colorwheel + RGB sliders + swatch
                         + Apply/Black + transient error banner)
   ui_settings.{h,cpp}   On-device settings editor (separate LVGL screen;
@@ -192,9 +196,9 @@ recording before they get lost:
   config schema (gradient-based effects) silently skip the update. The API
   still returns 200 with `Applied to N effects (skipped M)` — we don't
   currently parse the success body to surface the skipped count.
-- **No per-virtual color endpoint** in the same shape. Per-effect config goes
-  via `PUT /api/virtuals/{id}/effects`, a different code path — out of scope
-  for the global Color tab.
+- **Per-virtual color** — the global Color tab sets a single `background_color`
+  for every active effect that supports it. Per-virtual color uses a
+  different endpoint, `PUT /api/virtuals/{id}/effects` — see §13.
 - **Boot-time re-apply is skipped on first boot.** If the saved color matches
   the warm-white default (255, 200, 128) — i.e. the user has never picked
   anything — `setup()` does not send a redundant `apply_global` to LedFx.
@@ -209,3 +213,81 @@ recording before they get lost:
   pump uses the literal `2` to forward `RES_ACTION` to the Color tab's
   error-banner handler — if a 5th tab gets added, that constant needs to
   follow the shift or be replaced with a pointer-equality check.
+
+## 13. As-built notes — Per-virtual color (post-color-picker)
+
+Shipped as a per-virtual counterpart to §12's global Color tab. UX: tap the
+gradient swatch on any Virtuals-tab row → modal overlay with a colorwheel +
+RGB sliders + Apply/Black/Cancel → on Apply, sends
+`PUT /api/virtuals/{id}/effects` with just the `background_color`,
+preserving every other effect config field.
+
+- **Endpoint + body shape (confirmed):**
+  `PUT /api/virtuals/{id}/effects` with `{ "type": "<current_effect_type>",
+  "config": { "background_color": "#rrggbb" } }`. Source:
+  `LedFx/docs/apis/api.md` + `ledfx/api/virtual_effects.py`. The `type` field
+  is required — if omitted, the handler falls into the "create new effect"
+  branch and crashes on `effects.create(type=None)`. We read the type from
+  `VirtualInfo.effect_type` (already populated by `fetch_virtuals`).
+
+- **`config` is a partial merge.** LedFx only touches the keys you send.
+  Sending only `background_color` leaves brightness, mirror, flip, gradient,
+  and every other effect setting untouched. This is what makes the feature
+  safe — picking a color doesn't accidentally reset anything else.
+
+- **Per-virtual vs. global color:** the global Color tab uses
+  `PUT /api/effects {action:"apply_global", background_color:...}` which
+  updates every active effect that has `background_color` in its schema.
+  Per-virtual color uses the per-virtual endpoint above and only updates
+  one effect on one virtual. Both work; both can coexist on the same
+  installation.
+
+- **Effect support varies.** Same caveat as §12: some LedFx effects don't
+  accept `background_color`. The PUT returns `failed`; we surface that on
+  the bottom status label and the in-tab error banner
+  (`ui_virtuals_pump_action_result`).
+
+- **No "off" / "clear color" state** for per-virtual color either. The
+  Black button sends `background_color:"#000000"` — closest substitute,
+  identical pattern to §12.
+
+- **Modal pattern:** the per-virtual color picker is a top-layer overlay
+  built fresh on each open (`lv_obj_create(lv_layer_top())`) and destroyed
+  on close (`lv_obj_del`). Single-instance guarded. Backed by a `Request`
+  struct field `effect[16]` that holds the effect type alongside the
+  existing `id[48]` and `payload[208]` fields; `payload` shrank from 224
+  to 208 to make room (verified no existing caller filled near 224 bytes).
+
+- **Tab-index magic again.** `ui.cpp` routes `RES_ACTION` to
+  `ui_virtuals_pump_action_result` only when the active tab index is `1`
+  (Virtuals). Same fragility as the Color-tab literal `2` — if a 5th tab
+  gets added, the index needs to follow the shift. Consider adding pointer-
+  equality getters (`ui_virtuals_tab()`, `ui_color_tab()`) the next time
+  a second consumer needs the same check.
+
+- **Reverted decision (Tier 2.4 of the plan):** "highlight the swatch
+  whose modal is open" was coded then reverted — the Virtuals list only
+  re-renders on a fetch (30 s auto, tab switch, or post-action), so a
+  border style applied at modal-open time would never visually appear until
+  the next fetch. The modal itself is the obvious "I'm editing this"
+  indicator; the redundant border would be both broken and unnecessary.
+  The plan file keeps the task so future readers know it was considered.
+
+- **Persisted seed color:** the modal's RGB is seeded from the user's last
+  pick (`config_store.save_last_virt_color`) on first apply, with a
+  warm-white default (255, 200, 128) on first boot. The same "skip first
+  boot" trick from §12: if the saved color equals the default, the modal
+  reverts to deriving from the virtual's gradient color instead. NVS key
+  `K_LASTVCLR` in the `ledfx-hmi` namespace.
+
+- **Confirmation flash:** after a successful apply, the row's border goes
+  green for ~1.5 s on the next render. `s_last_set_idx` + `s_last_set_ms`
+  track the most recent apply; `render_virt_list()` paints the border
+  when `millis() - s_last_set_ms < FLASH_TIMEOUT_MS`. The flash expires
+  naturally without a timer because render_virt_list() reads the elapsed
+  time each call.
+
+- **`ui_virtuals.cpp` line count:** now ~570 LOC (was ~210 before Tier 1).
+  The per-virtual color modal alone is ~180 LOC. Worth splitting into a
+  sibling module `ui_virtuals_color.{h,cpp}` if a 3rd polish iteration
+  adds more per-virtual features.
