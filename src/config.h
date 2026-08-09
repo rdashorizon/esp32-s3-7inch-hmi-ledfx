@@ -36,4 +36,9 @@ private:
     bool _has_ledfx = false;
 };
 
+// URL sanity check — must start with http:// or https:// and have at least one
+// character of host. Used by the captive portal and the on-device settings
+// editor to reject garbage before rebooting.
+bool config_url_is_valid(const String &url);
+
 extern ConfigStore config_store;

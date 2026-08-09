@@ -51,6 +51,14 @@ small{color:#666}
 </body></html>
 )HTML";
 
+bool config_url_is_valid(const String &url) {
+    if (url.length() < 8) return false;  // shorter than "http://x"
+    if (!url.startsWith("http://") && !url.startsWith("https://")) return false;
+    int scheme_len = url.startsWith("https://") ? 8 : 7;
+    // Require at least one host character before any path/query.
+    return url.charAt(scheme_len) != '/' && url.charAt(scheme_len) != '\0';
+}
+
 bool ConfigStore::load(Config &out) {
     Preferences prefs;
     prefs.begin(NVS_NS, true);
@@ -124,6 +132,15 @@ bool ConfigStore::run_captive_portal(uint32_t timeout_seconds) {
         cfg.ledfx_url = server.arg("ledfx_url");
         cfg.ledfx_user = server.arg("ledfx_user");
         cfg.ledfx_pass = server.arg("ledfx_pass");
+        if (!config_url_is_valid(cfg.ledfx_url)) {
+            server.send(200, "text/html",
+                "<h1>Invalid LedFx URL</h1>"
+                "<p>The URL must start with <code>http://</code> or "
+                "<code>https://</code> and include a host. Example: "
+                "<code>http://192.168.1.20:8888</code>.</p>"
+                "<p><a href=\"/\">Back to form</a></p>");
+            return;
+        }
         this->save(cfg);
         server.send(200, "text/html", "<h1>Saved</h1><p>Rebooting...</p>");
         delay(500);

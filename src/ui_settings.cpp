@@ -50,6 +50,17 @@ static void settings_save_cb(lv_event_t *e) {
     cfg.ledfx_url  = lv_textarea_get_text(s_ta_url);
     cfg.ledfx_user = lv_textarea_get_text(s_ta_user);
     cfg.ledfx_pass = lv_textarea_get_text(s_ta_lpass);
+    if (!config_url_is_valid(cfg.ledfx_url)) {
+        // Reject without reboot: the user can fix the URL and re-save. The
+        // bottom status bar carries the error message.
+        ui_show_status("Invalid LedFx URL — must start with http:// or https://", true);
+        // Highlight the URL field by giving it focus + a red border.
+        lv_obj_add_state(s_ta_url, LV_STATE_FOCUSED);
+        // Move the keyboard back over the URL field if it was hidden.
+        lv_keyboard_set_textarea(s_settings_kb, s_ta_url);
+        lv_obj_clear_flag(s_settings_kb, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
     config_store.save(cfg);
     ui_show_status("Settings saved — rebooting…");
     lv_refr_now(NULL);
