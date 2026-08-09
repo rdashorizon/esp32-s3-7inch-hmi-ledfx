@@ -68,6 +68,22 @@ private:
 // editor to reject garbage before rebooting.
 bool config_url_is_valid(const String &url);
 
+// Theme support (Dark/Light + 4 accent presets). The numeric enum values
+// are stored in NVS as-is; the color mapping lives in src/ui_theme.cpp so
+// this header stays color-agnostic. Adding a new accent preset only touches
+// the accent_to_rgb565() map there.
+enum class ThemeMode   : uint8_t { DARK = 0, LIGHT = 1 };
+enum class AccentColor : uint8_t { BLUE = 0, GREEN = 1, ORANGE = 2, MAGENTA = 3 };
+
+struct Theme {
+    ThemeMode   mode    = ThemeMode::DARK;
+    AccentColor accent  = AccentColor::BLUE;
+};
+
+// Load theme from NVS; corrupt/out-of-range values clamp to defaults.
+Theme  config_load_theme();
+void   config_save_theme(const Theme &t);
+
 // Per-device identity derived from the chip's efuse MAC (last 3 bytes as
 // lowercase hex, e.g. "a1b2c3"). Stable across reboots, unique per board.
 // This is the single source of truth for the AP PSK, the OTA hostname, and the

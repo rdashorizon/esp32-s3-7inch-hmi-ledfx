@@ -25,6 +25,8 @@ static const char *K_SCRBRI = "scr_bright";
 static const char *K_LASTTAB = "last_tab";
 static const char *K_LASTCLR = "last_color";
 static const char *K_LASTVCLR = "last_vcolor";
+static const char *K_THEME_MODE   = "theme_mode";
+static const char *K_THEME_ACCENT = "theme_accent";
 
 static const byte DNS_PORT = 53;
 static const IPAddress AP_IP(4, 3, 2, 1);
@@ -211,6 +213,27 @@ void ConfigStore::save_last_virt_color(LedColor c) {
     prefs.begin(NVS_NS, false);
     uint8_t buf[3] = { c.r, c.g, c.b };
     prefs.putBytes(K_LASTVCLR, buf, sizeof(buf));
+    prefs.end();
+}
+
+Theme config_load_theme() {
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    Theme t;
+    t.mode   = (ThemeMode)  prefs.getUChar(K_THEME_MODE,   (uint8_t)ThemeMode::DARK);
+    t.accent = (AccentColor)prefs.getUChar(K_THEME_ACCENT, (uint8_t)AccentColor::BLUE);
+    prefs.end();
+    // Clamp to known values; corrupted NVS could land us anywhere.
+    if ((uint8_t)t.mode   > (uint8_t)ThemeMode::LIGHT)    t.mode   = ThemeMode::DARK;
+    if ((uint8_t)t.accent > (uint8_t)AccentColor::MAGENTA) t.accent = AccentColor::BLUE;
+    return t;
+}
+
+void config_save_theme(const Theme &t) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    prefs.putUChar(K_THEME_MODE,   (uint8_t)t.mode);
+    prefs.putUChar(K_THEME_ACCENT, (uint8_t)t.accent);
     prefs.end();
 }
 
