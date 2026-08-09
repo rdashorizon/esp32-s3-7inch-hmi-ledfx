@@ -283,6 +283,32 @@ static void result_pump_cb(lv_timer_t *t) {
     }
 }
 
+// Confirmation handler for the "Reset settings" button.
+static void reset_confirm_cb(lv_event_t *e) {
+    lv_obj_t *mbox = lv_event_get_current_target(e);
+    uint16_t id = lv_msgbox_get_active_btn(mbox);  // 0 = Reset, 1 = Cancel
+    lv_msgbox_close(mbox);
+    if (id == 0) {
+        config_store.clear();  // wipe saved WiFi + LedFx config from NVS
+        ui_show_status("Settings cleared — rebooting into setup…");
+        lv_refr_now(NULL);     // paint the message before we restart
+        delay(600);
+        ESP.restart();         // reboot: no config -> captive portal
+    }
+}
+
+// Wipe saved WiFi/LedFx settings and reboot into the setup portal. This is the
+// supported way to re-enter setup on this board (the BOOT button can't be used
+// — GPIO0 is the LCD pixel clock).
+static void reset_btn_cb(lv_event_t *e) {
+    (void)e;
+    static const char *btns[] = {"Reset", "Cancel", ""};
+    lv_obj_t *mbox = lv_msgbox_create(NULL, "Reset settings",
+        "Erase saved WiFi and LedFx settings and reboot into setup?", btns, false);
+    lv_obj_add_event_cb(mbox, reset_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_center(mbox);
+}
+
 static void build_global_screen(void) {
     lv_obj_set_flex_flow(s_tab_global, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_all(s_tab_global, 16, 0);
@@ -349,6 +375,15 @@ static void build_global_screen(void) {
     lv_obj_set_width(s_gstatus_label, LV_PCT(100));
     lv_obj_set_style_text_color(s_gstatus_label, lv_color_hex(0xaaaaaa), 0);
     update_global_status();
+
+    // Reset button: wipe WiFi/LedFx config and reboot into the setup portal.
+    lv_obj_t *reset_btn = lv_btn_create(s_tab_global);
+    lv_obj_set_height(reset_btn, 50);
+    lv_obj_set_style_bg_color(reset_btn, lv_color_hex(0xaa2222), 0);
+    lv_obj_t *rl = lv_label_create(reset_btn);
+    lv_label_set_text(rl, LV_SYMBOL_TRASH "  Reset WiFi / settings");
+    lv_obj_center(rl);
+    lv_obj_add_event_cb(reset_btn, reset_btn_cb, LV_EVENT_CLICKED, NULL);
 }
 
 // ---- Tab switching ---------------------------------------------------------
