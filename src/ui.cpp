@@ -30,6 +30,12 @@ static uint32_t  s_last_refresh_ms = 0;
 // the network client directly (that would race the worker thread).
 static bool      s_link_ok = false;
 
+// Per-data-screen loading spinner + error banner (overlaid on the tab).
+static lv_obj_t *s_scene_spinner = nullptr;
+static lv_obj_t *s_scene_error   = nullptr;
+static lv_obj_t *s_virt_spinner  = nullptr;
+static lv_obj_t *s_virt_error    = nullptr;
+
 // Refresh the active data screen (scenes/virtuals) on a timer so the HUD
 // tracks LedFx state changes made elsewhere. Period in milliseconds.
 static const uint32_t AUTO_REFRESH_MS = 30000;
@@ -40,10 +46,23 @@ static void update_global_status(void);
 static void request_scenes(void);
 static void request_virtuals(void);
 
+// Show/hide an optional widget (spinner, error banner).
+static void obj_show(lv_obj_t *o, bool show) {
+    if (!o) return;
+    if (show) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else      lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+
 // ---- Scenes screen ---------------------------------------------------------
 static lv_obj_t *s_scene_grid;
 static SceneInfo *s_scenes = nullptr;
 static int s_scene_count = 0;
+
+// 4-column grid; the row tracks are sized per render (below) so any scene count
+// lays out and the grid scrolls when it's taller than the screen.
+static lv_coord_t s_scene_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1),
+                                       LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+static lv_coord_t s_scene_row_dsc[10] = {LV_GRID_TEMPLATE_LAST};  // filled per render
 
 static void scene_btn_clicked(lv_event_t *e) {
     lv_obj_t *btn = lv_event_get_target(e);
@@ -63,12 +82,25 @@ static void scene_btn_long(lv_event_t *e) {
 
 // Ask the worker for a fresh scene list; render_scene_grid() paints the reply.
 static void request_scenes(void) {
-    if (worker_submit(req_simple(REQ_FETCH_SCENES))) ui_show_status("Refreshing scenes…");
+    if (worker_submit(req_simple(REQ_FETCH_SCENES))) {
+        obj_show(s_scene_spinner, true);
+        obj_show(s_scene_error, false);
+        ui_show_status("Refreshing scenes…");
+    }
 }
 
 // Paint the grid from the already-populated s_scenes[] (owned by the pump).
 static void render_scene_grid(void) {
     lv_obj_clean(s_scene_grid);
+
+    // Size the grid to exactly the rows we need (4 per row, cap 32 -> 8 rows)
+    // so it scrolls vertically once it's taller than the tab.
+    int rows = (s_scene_count + 3) / 4;
+    if (rows < 1) rows = 1;
+    if (rows > 8) rows = 8;
+    for (int r = 0; r < rows; r++) s_scene_row_dsc[r] = 80;
+    s_scene_row_dsc[rows] = LV_GRID_TEMPLATE_LAST;
+    lv_obj_set_grid_dsc_array(s_scene_grid, s_scene_col_dsc, s_scene_row_dsc);
 
     for (int i = 0; i < s_scene_count; i++) {
         const int col = i % 4;
@@ -86,11 +118,13 @@ static void render_scene_grid(void) {
 
         if (s_scenes[i].active) {
             lv_obj_set_style_bg_color(btn, lv_color_hex(0x2266cc), 0);
+            lv_obj_set_style_border_color(btn, lv_color_hex(0x8ab4ff), 0);
+            lv_obj_set_style_border_width(btn, 2, 0);
         }
     }
     s_last_refresh_ms = millis();
     update_global_status();
-    ui_show_status("Scenes refreshed");
+    ui_show_status(s_scene_count ? "Scenes refreshed" : "No scenes found");
 }
 
 // ---- Virtuals screen -------------------------------------------------------
@@ -127,7 +161,11 @@ static void pause_all_cb(lv_event_t *e) {
 
 // Ask the worker for a fresh virtual list; render_virt_list() paints the reply.
 static void request_virtuals(void) {
-    if (worker_submit(req_simple(REQ_FETCH_VIRTUALS))) ui_show_status("Refreshing virtuals…");
+    if (worker_submit(req_simple(REQ_FETCH_VIRTUALS))) {
+        obj_show(s_virt_spinner, true);
+        obj_show(s_virt_error, false);
+        ui_show_status("Refreshing virtuals…");
+    }
 }
 
 // Paint the list from the already-populated s_virt[] (owned by the pump).
@@ -141,10 +179,17 @@ static void render_virt_list(void) {
         lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
                               LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
+        // Subtitle: effect type, plus the effect's display name when it adds info.
+        String sub;
+        if (s_virt[i].effect_type.isEmpty()) {
+            sub = "— no effect —";
+        } else {
+            sub = s_virt[i].effect_type;
+            if (!s_virt[i].effect_name.isEmpty() && s_virt[i].effect_name != s_virt[i].effect_type)
+                sub += " · " + s_virt[i].effect_name;
+        }
         lv_obj_t *name = lv_label_create(row);
-        lv_label_set_text_fmt(name, "%s\n%s",
-                              s_virt[i].name.c_str(),
-                              s_virt[i].effect_type.isEmpty() ? "— no effect —" : s_virt[i].effect_type.c_str());
+        lv_label_set_text_fmt(name, "%s\n%s", s_virt[i].name.c_str(), sub.c_str());
 
         lv_obj_t *dice = lv_btn_create(row);
         lv_obj_set_size(dice, 50, 50);
@@ -261,15 +306,35 @@ static void result_pump_cb(lv_timer_t *t) {
                 delete[] s_scenes;  // release the previous list
                 s_scenes = static_cast<SceneInfo *>(r.data);
                 s_scene_count = r.count;
-                if (r.status == 200) render_scene_grid();
-                else ui_show_status(r.msg[0] ? r.msg : "Failed to fetch scenes", true);
+                obj_show(s_scene_spinner, false);
+                if (r.status == 200) {
+                    obj_show(s_scene_error, false);
+                    render_scene_grid();
+                } else {
+                    lv_obj_clean(s_scene_grid);
+                    if (s_scene_error)
+                        lv_label_set_text(s_scene_error,
+                            (String(LV_SYMBOL_WARNING "  ") + (r.msg[0] ? r.msg : "Couldn't reach LedFx")).c_str());
+                    obj_show(s_scene_error, true);
+                    ui_show_status(r.msg[0] ? r.msg : "Failed to fetch scenes", true);
+                }
                 break;
             case RES_VIRTUALS:
                 delete[] s_virt;
                 s_virt = static_cast<VirtualInfo *>(r.data);
                 s_virt_count = r.count;
-                if (r.status == 200) render_virt_list();
-                else ui_show_status(r.msg[0] ? r.msg : "Failed to fetch virtuals", true);
+                obj_show(s_virt_spinner, false);
+                if (r.status == 200) {
+                    obj_show(s_virt_error, false);
+                    render_virt_list();
+                } else {
+                    lv_obj_clean(s_virt_list);
+                    if (s_virt_error)
+                        lv_label_set_text(s_virt_error,
+                            (String(LV_SYMBOL_WARNING "  ") + (r.msg[0] ? r.msg : "Couldn't reach LedFx")).c_str());
+                    obj_show(s_virt_error, true);
+                    ui_show_status(r.msg[0] ? r.msg : "Failed to fetch virtuals", true);
+                }
                 break;
             case RES_ACTION:
                 ui_show_status(r.msg, r.status != 200);
@@ -412,17 +477,35 @@ void ui_init(void) {
     lv_obj_align(s_status_label, LV_ALIGN_BOTTOM_LEFT, 8, -4);
     lv_label_set_text(s_status_label, "Ready");
 
-    // Grids/lists
-    static lv_coord_t col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-    static lv_coord_t row_dsc[] = {80, 80, 80, 80, 80, 80, LV_GRID_TEMPLATE_LAST};
+    // Scenes: 4-column grid, rows sized per render so it scrolls for any count.
     s_scene_grid = lv_obj_create(s_tab_scenes);
     lv_obj_set_size(s_scene_grid, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_grid_dsc_array(s_scene_grid, col_dsc, row_dsc);
     lv_obj_set_layout(s_scene_grid, LV_LAYOUT_GRID);
+    lv_obj_set_grid_dsc_array(s_scene_grid, s_scene_col_dsc, s_scene_row_dsc);
+
+    // Loading spinner + error banner overlaid on the scenes tab.
+    s_scene_spinner = lv_spinner_create(s_tab_scenes, 1000, 60);
+    lv_obj_set_size(s_scene_spinner, 56, 56);
+    lv_obj_center(s_scene_spinner);
+    lv_obj_add_flag(s_scene_spinner, LV_OBJ_FLAG_HIDDEN);
+    s_scene_error = lv_label_create(s_tab_scenes);
+    lv_obj_set_style_text_color(s_scene_error, lv_color_hex(0xff6666), 0);
+    lv_obj_center(s_scene_error);
+    lv_obj_add_flag(s_scene_error, LV_OBJ_FLAG_HIDDEN);
 
     s_virt_list = lv_obj_create(s_tab_virtuals);
     lv_obj_set_size(s_virt_list, LV_PCT(100), LV_PCT(100));
     lv_obj_set_flex_flow(s_virt_list, LV_FLEX_FLOW_COLUMN);
+
+    // Loading spinner + error banner overlaid on the virtuals tab.
+    s_virt_spinner = lv_spinner_create(s_tab_virtuals, 1000, 60);
+    lv_obj_set_size(s_virt_spinner, 56, 56);
+    lv_obj_center(s_virt_spinner);
+    lv_obj_add_flag(s_virt_spinner, LV_OBJ_FLAG_HIDDEN);
+    s_virt_error = lv_label_create(s_tab_virtuals);
+    lv_obj_set_style_text_color(s_virt_error, lv_color_hex(0xff6666), 0);
+    lv_obj_center(s_virt_error);
+    lv_obj_add_flag(s_virt_error, LV_OBJ_FLAG_HIDDEN);
 
     // Clear-all button on virtuals screen
     lv_obj_t *clear_btn = lv_btn_create(s_tab_virtuals);
