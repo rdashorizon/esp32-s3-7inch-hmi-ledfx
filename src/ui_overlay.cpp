@@ -43,10 +43,8 @@ static void build_overlay(void) {
     lv_obj_set_style_bg_opa(s_overlay, LV_OPA_50, 0);  // 50% black overlay
     lv_obj_set_style_border_width(s_overlay, 0, 0);
     lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    // Click-through: don't steal input from the active tab.
-    lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_EVENT_BUBBLE);  // safe — see below
-    // Actually, we want it to NOT absorb clicks. LVGL 8.x: clear the clickable
-    // flag and let events bubble up. The tab beneath still receives them.
+    // Click-through: the veil is informational, so it must not absorb input
+    // meant for the tab underneath it.
     lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_CLICKABLE);
 
     s_overlay_label = lv_label_create(s_overlay);

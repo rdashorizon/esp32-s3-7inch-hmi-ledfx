@@ -53,11 +53,17 @@ void setup(void) {
     ui_theme_setup();
 
     if (!config_store.load(g_config)) {
-        // No config yet — straight into the setup AP. The portal now services
-        // LVGL so the screen stays live while the user fills in the form.
+        // No config yet — straight into the setup AP. The portal services LVGL
+        // so the screen stays live while the user fills in the form, and it
+        // reboots the device as soon as a config is saved.
         ui_init();
         ui_show_status("Configure via WiFi: ledfx-hmi-setup");
         (void)config_store.run_captive_portal();
+        // run_captive_portal() only returns if it was given a timeout (it
+        // isn't here). Return rather than falling through — the rest of setup()
+        // would call ui_init() a second time and build a duplicate tabview,
+        // duplicate timers and duplicate overlays on top of the first.
+        return;
     }
 
     // We have config. Bring up the network worker first (so the very first UI

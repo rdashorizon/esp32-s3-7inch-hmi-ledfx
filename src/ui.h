@@ -8,12 +8,21 @@
 
 struct Request;  // defined in worker.h (forward decl keeps ui.h light)
 
+// Tab order in the tabview built by ui_init(). Also the value persisted by
+// ConfigStore::save_last_tab(). Keep in sync with the lv_tabview_add_tab()
+// calls in ui_init().
+enum UiTab : uint8_t {
+    UI_TAB_SCENES = 0,
+    UI_TAB_VIRTUALS,
+    UI_TAB_COLOR,
+    UI_TAB_GLOBAL,
+    UI_TAB_COUNT,
+};
+
 void ui_init(void);
 
 void ui_show_status(const char *msg, bool is_error = false);
 void ui_show_status_fmt(bool is_error, const char *fmt, ...);  // printf-style
-void ui_refresh_scenes(void);   // re-fetch + repaint scene grid
-void ui_refresh_virtuals(void); // re-fetch + repaint virtual list
 
 // Getter for the bottom status label. Exposed as a getter (not an extern
 // global) so the underlying symbol can stay `static` in ui.cpp and we don't

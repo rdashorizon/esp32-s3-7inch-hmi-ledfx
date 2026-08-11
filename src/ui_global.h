@@ -17,8 +17,10 @@
 // Builds the Global tab under the given parent (the third lv_tabview tab).
 void ui_global_build(lv_obj_t *parent);
 
-// Reflect server-side global state (pause/brightness/mirror/flip) onto the
-// Global-tab controls. Called from the result pump on RES_VIRTUALS.
+// Reflect server-side global state (brightness/mirror/flip) onto the
+// Global-tab controls. Called from the result pump on RES_VIRTUALS. No-op if
+// `g` isn't valid; mirror/flip are only written when an active effect actually
+// reported them, so a server with nothing running doesn't force them off.
 void ui_global_apply_state(const GlobalsState &g);
 
 // Same as ui_global_apply_state, but also drives the Virtuals-tab pause switch
@@ -47,14 +49,9 @@ void ui_global_status_tick(void);
 // Called from ui_init() after ui_global_build().
 void ui_global_install_overlays(void);
 
-// Getter for the top-right WiFi indicator (the only widget the Global tab
-// places on lv_layer_top outside its own tab body). Exposed as a getter
-// so the underlying `static` symbol stays file-local; the theme module
-// reads this during ui_theme_apply() to re-color the indicator.
-lv_obj_t *ui_global_conn_dot(void);
-
-// Theme support (Tier 1.4): re-color the Global tab's status row + the
-// theme picker's panel/border + the "currently selected" button highlight.
+// Theme support (Tier 1.4): re-color the Global tab's status row, the theme
+// picker's panel/border, the "currently selected" button highlight, and the
+// top-layer WiFi indicator (whose color depends on the theme mode too).
 // Dispatched by ui_theme_apply() via the ui_global namespace hook.
 void ui_global_apply_theme(void);
 

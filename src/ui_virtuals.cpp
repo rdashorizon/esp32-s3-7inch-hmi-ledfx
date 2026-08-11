@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 #include "ui_virtuals.h"
 #include "ui.h"         // ui_show_status, ui_submit (for the overlay)
+#include "ui_common.h"  // ui_obj_show, UiBanner
 #include "worker.h"     // worker_submit, req_*, REQ_*
 #include "ui_global.h"  // ui_global_mark_refreshed, ui_global_apply_state_with_pause
 #include "ui_virtuals_color.h"  // per-virtual color modal (Tier 1 split-out)
@@ -29,27 +30,7 @@ static int s_virt_count = 0;
 // Surfaces color-set / randomize / clear / toggle failures while the
 // Virtuals tab is in front. Kept here (rather than in ui_virtuals_color)
 // because it's a generic action-result banner, not color-specific.
-static lv_obj_t *s_banner = nullptr;
-static lv_timer_t *s_banner_timer = nullptr;
-static const uint32_t BANNER_TIMEOUT_MS = 3000;
-
-// ---- Helpers ---------------------------------------------------------------
-static void obj_show(lv_obj_t *o, bool show) {
-    if (!o) return;
-    if (show) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
-    else      lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
-}
-
-// Map LedFx gradient preset name → representative RGB565 hex. Hand-picked
-// "signature" colors so each gradient reads distinctly in a small swatch;
-// they don't try to be physically accurate to the full gradient.
-//
-// The full implementation moved to ui_virtuals_color.cpp (which owns
-// everything color-related). This wrapper exists so the parent's swatch
-// continues to compile without dragging the full function in.
-static uint32_t gradient_to_color(const String &name) {
-    return ui_virtuals_color_gradient_to_rgb565(name);
-}
+static UiBanner s_banner;
 
 // ---- Event handlers --------------------------------------------------------
 static void virt_toggle(lv_event_t *e) {
@@ -162,7 +143,7 @@ static void render_virt_list(void) {
         lv_obj_t *swatch = lv_obj_create(row);
         lv_obj_set_size(swatch, 20, 20);
         lv_obj_set_style_bg_color(swatch,
-            lv_color_hex(gradient_to_color(s_virt[i].gradient)), 0);
+            lv_color_hex(ui_virtuals_color_gradient_to_rgb565(s_virt[i].gradient)), 0);
         lv_obj_set_style_border_width(swatch, 1, 0);
         lv_obj_set_style_border_color(swatch,
             lv_color_hex(ui_theme_border()), 0);
@@ -188,8 +169,6 @@ static void render_virt_list(void) {
         lv_obj_t *empty = lv_label_create(s_virt_list);
         lv_label_set_text(empty, "No virtuals configured yet.");
     }
-    ui_global_mark_refreshed();
-    ui_show_status("Virtuals refreshed");
 }
 
 // ---- Public API ------------------------------------------------------------
@@ -213,18 +192,8 @@ void ui_virtuals_build(lv_obj_t *parent) {
 
     // Tier 1.6: transient action-result banner. Positioned just above the
     // bottom toolbar so it's visible without overlapping the toggle rows.
-    s_banner = lv_label_create(parent);
-    lv_obj_set_width(s_banner, LV_PCT(100) - 32);
-    lv_obj_align(s_banner, LV_ALIGN_BOTTOM_MID, 0, -76);  // above the toolbar
-    lv_obj_set_style_text_color(s_banner,
-        lv_color_hex(ui_theme_text_warn()), 0);
-    lv_obj_set_style_bg_color(s_banner,
-        lv_color_hex(ui_theme_panel_alt()), 0);
-    lv_obj_set_style_bg_opa(s_banner, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(s_banner, 8, 0);
-    lv_obj_set_style_radius(s_banner, 4, 0);
-    lv_label_set_text(s_banner, "");
-    lv_obj_add_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
+    s_banner.build(parent, LV_PCT(100) - 32);
+    lv_obj_align(s_banner.obj(), LV_ALIGN_BOTTOM_MID, 0, -76);  // above the toolbar
 
     // Clear-all button on virtuals screen
     lv_obj_t *clear_btn = lv_btn_create(parent);
@@ -250,43 +219,20 @@ void ui_virtuals_build(lv_obj_t *parent) {
 
 void ui_virtuals_request_refresh(void) {
     if (ui_submit(req_simple(REQ_FETCH_VIRTUALS))) {
-        obj_show(s_virt_spinner, true);
-        obj_show(s_virt_error, false);
+        ui_obj_show(s_virt_spinner, true);
+        ui_obj_show(s_virt_error, false);
         ui_show_status("Refreshing virtuals…");
     }
 }
 
 // ---- Transient banner (Tier 1.6) -----------------------------------------
-static void banner_hide_cb(lv_timer_t *t) {
-    (void)t;
-    if (s_banner) lv_obj_add_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
-    if (s_banner_timer) {
-        lv_timer_del(s_banner_timer);
-        s_banner_timer = nullptr;
-    }
-}
-
-static void banner_show(const char *msg) {
-    if (!s_banner) return;
-    lv_label_set_text(s_banner, msg);
-    lv_obj_clear_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
-    if (s_banner_timer) lv_timer_del(s_banner_timer);
-    s_banner_timer = lv_timer_create(banner_hide_cb, BANNER_TIMEOUT_MS, NULL);
-    lv_timer_set_repeat_count(s_banner_timer, 1);
-}
-
 void ui_virtuals_pump_action_result(int status, const char *msg) {
     if (status != 200 && msg && msg[0]) {
         char buf[96];
         snprintf(buf, sizeof(buf), LV_SYMBOL_WARNING "  %s", msg);
-        banner_show(buf);
-    } else if (s_banner) {
-        // Success — dismiss any prior error banner immediately.
-        lv_obj_add_flag(s_banner, LV_OBJ_FLAG_HIDDEN);
-        if (s_banner_timer) {
-            lv_timer_del(s_banner_timer);
-            s_banner_timer = nullptr;
-        }
+        s_banner.show(buf);
+    } else {
+        s_banner.hide();   // success — dismiss any prior error immediately
     }
 }
 
@@ -295,17 +241,21 @@ void ui_virtuals_pump_result(int status, int count, VirtualInfo *data,
     delete[] s_virt;
     s_virt = data;
     s_virt_count = count;
-    obj_show(s_virt_spinner, false);
+    ui_obj_show(s_virt_spinner, false);
     if (status == 200) {
-        obj_show(s_virt_error, false);
+        ui_obj_show(s_virt_error, false);
         render_virt_list();
+        // Post-fetch bookkeeping lives here, not in render_virt_list(): the
+        // theme hook also re-renders, and that isn't a data refresh.
+        ui_show_status("Virtuals refreshed");
+        ui_global_mark_refreshed();
         ui_global_apply_state_with_pause(globals, s_pause_sw);
     } else {
         lv_obj_clean(s_virt_list);
         if (s_virt_error)
             lv_label_set_text(s_virt_error,
                 (String(LV_SYMBOL_WARNING "  ") + (err && err[0] ? err : "Couldn't reach LedFx")).c_str());
-        obj_show(s_virt_error, true);
+        ui_obj_show(s_virt_error, true);
         ui_show_status(err && err[0] ? err : "Failed to fetch virtuals", true);
     }
 }
@@ -320,15 +270,12 @@ void ui_virtuals_apply_theme(void) {
         lv_obj_set_style_text_color(s_virt_error,
             lv_color_hex(ui_theme_text_error()), 0);
     }
-    if (s_banner) {
-        lv_obj_set_style_text_color(s_banner,
-            lv_color_hex(ui_theme_text_warn()), 0);
-        lv_obj_set_style_bg_color(s_banner,
-            lv_color_hex(ui_theme_panel_alt()), 0);
-    }
-    // Row swatches + flash colors are computed at row-build time via the
-    // theme accessors — invalidating the list re-runs render_virt_list().
-    if (s_virt_list) lv_obj_invalidate(s_virt_list);
+    s_banner.apply_theme();
+    // Row swatch borders and the confirmation flash are baked into each row at
+    // build time from the theme accessors, so the list has to be rebuilt —
+    // invalidating only marks the area dirty and would leave the old colors on
+    // screen until the next fetch (up to AUTO_REFRESH_MS away).
+    if (s_virt_list) render_virt_list();
 }
 
 namespace ui_virtuals {

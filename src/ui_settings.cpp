@@ -39,8 +39,13 @@ static void settings_kb_event(lv_event_t *e) {
 }
 
 static void settings_close(void) {
-    lv_scr_load(ui_root());
-    if (s_settings_scr) { lv_obj_del(s_settings_scr); s_settings_scr = nullptr; }
+    // lv_scr_load() + an immediate lv_obj_del() of the outgoing screen deletes
+    // it while LVGL is still mid-load. lv_scr_load_anim(..., auto_del=true)
+    // is the supported way to hand that teardown to LVGL.
+    lv_scr_load_anim(ui_root(), LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    s_settings_scr = nullptr;
+    s_ta_ssid = s_ta_wpass = s_ta_url = nullptr;
+    s_ta_user = s_ta_lpass = s_settings_kb = nullptr;
 }
 static void settings_back_cb(lv_event_t *e) { (void)e; settings_close(); }
 
@@ -97,7 +102,8 @@ static void settings_test_cb(lv_event_t *e) {
     ui_show_status("Testing connection…");
 }
 
-static void settings_open(void) {
+void ui_settings_open(void) {
+    if (s_settings_scr) return;  // already open — a double-tap would leak it
     s_settings_scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_settings_scr,
         lv_color_hex(ui_theme_root_bg()), 0);
@@ -143,11 +149,7 @@ static void settings_open(void) {
     lv_scr_load(s_settings_scr);
 }
 
-void ui_settings_open(void) {
-    settings_open();
-}
-
 void ui_settings_register_button(lv_obj_t *btn) {
-    lv_obj_add_event_cb(btn, [](lv_event_t *e) { (void)e; settings_open(); },
+    lv_obj_add_event_cb(btn, [](lv_event_t *e) { (void)e; ui_settings_open(); },
                         LV_EVENT_CLICKED, NULL);
 }

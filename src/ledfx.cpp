@@ -3,8 +3,8 @@
 //
 // fetch_scenes/fetch_virtuals allocate the result arrays with new[]. The
 // caller owns them and must release them with delete[] (they hold String
-// members, so free() would leak). Counts are capped at 32 scenes / 32
-// virtuals — the typical LedFx install has at most a handful of either.
+// members, so free() would leak). Counts are capped at LEDFX_MAX_ITEMS —
+// the typical LedFx install has at most a handful of either.
 // ---------------------------------------------------------------------------
 #include "ledfx.h"
 #include "net.h"
@@ -64,10 +64,9 @@ int LedFxClient::fetch_scenes(SceneInfo *&out, int &count) {
     JsonObject scenes = doc["scenes"];
     if (scenes.isNull()) return 200;
 
-    count = 0;
-    for (JsonPair kv : scenes) count++;
+    count = (int)scenes.size();
     if (count == 0) return 200;
-    if (count > 32) count = 32;
+    if (count > LEDFX_MAX_ITEMS) count = LEDFX_MAX_ITEMS;
 
     // new[] so the String members are constructed (and destructed on delete[]);
     // the previous calloc()/free() pair leaked every String on each refresh.
@@ -103,10 +102,9 @@ int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count, GlobalsState *glo
     JsonObject virtuals = doc["virtuals"];
     if (virtuals.isNull()) return 200;
 
-    count = 0;
-    for (JsonPair kv : virtuals) count++;
+    count = (int)virtuals.size();
     if (count == 0) return 200;
-    if (count > 32) count = 32;
+    if (count > LEDFX_MAX_ITEMS) count = LEDFX_MAX_ITEMS;
 
     out = new (std::nothrow) VirtualInfo[count];
     if (!out) { count = 0; return 500; }
@@ -127,13 +125,11 @@ int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count, GlobalsState *glo
             JsonObject ec = eff["config"];
             if (!ec.isNull()) {
                 out[i].gradient = ec["gradient"] | "";
-            }
-            // Take mirror/flip from the first active effect as the
-            // representative values (apply_global keeps them in sync). Brightness
-            // is not here — it's the master global_brightness in /api/config.
-            if (globals && !globals->has_flags && (kv.value()["active"] | false)) {
-                JsonObject ec = eff["config"];
-                if (!ec.isNull()) {
+                // Take mirror/flip from the first active effect as the
+                // representative values (apply_global keeps them in sync).
+                // Brightness is not here — it's the master global_brightness
+                // in /api/config.
+                if (globals && !globals->has_flags && (kv.value()["active"] | false)) {
                     globals->mirror    = ec["mirror"] | false;
                     globals->flip      = ec["flip"] | false;
                     globals->has_flags = true;
@@ -145,42 +141,40 @@ int LedFxClient::fetch_virtuals(VirtualInfo *&out, int &count, GlobalsState *glo
     return 200;
 }
 
+// Serialize `doc` and PUT it to `path`. Every command endpoint has this shape;
+// only the two /api/effects bulk actions care about the response body, so
+// `resp_out` is optional.
+int LedFxClient::_put(const String &path, const JsonDocument &doc, String *resp_out) {
+    String body;
+    serializeJson(doc, body);
+    String scratch;
+    return net.put_json(_url(path), body, resp_out ? *resp_out : scratch);
+}
+
 int LedFxClient::activate_scene(const String &id) {
     StaticJsonDocument<128> doc;
     doc["id"] = id;
     doc["action"] = "activate";
-    String body;
-    serializeJson(doc, body);
-    String resp;
-    return net.put_json(_url("/api/scenes"), body, resp);
+    return _put("/api/scenes", doc);
 }
 
 int LedFxClient::deactivate_scene(const String &id) {
     StaticJsonDocument<128> doc;
     doc["id"] = id;
     doc["action"] = "deactivate";
-    String body;
-    serializeJson(doc, body);
-    String resp;
-    return net.put_json(_url("/api/scenes"), body, resp);
+    return _put("/api/scenes", doc);
 }
 
 int LedFxClient::set_virtual_active(const String &id, bool active) {
     StaticJsonDocument<128> doc;
     doc["active"] = active;
-    String body;
-    serializeJson(doc, body);
-    String resp;
-    return net.put_json(_url("/api/virtuals/" + id), body, resp);
+    return _put("/api/virtuals/" + id, doc);
 }
 
 int LedFxClient::randomize_virtual(const String &id) {
     StaticJsonDocument<128> doc;
     doc["config"] = "RANDOMIZE";
-    String body;
-    serializeJson(doc, body);
-    String resp;
-    return net.put_json(_url("/api/virtuals/" + id + "/effects"), body, resp);
+    return _put("/api/virtuals/" + id + "/effects", doc);
 }
 
 int LedFxClient::set_virtual_color(const String &id, const String &type,
@@ -192,19 +186,13 @@ int LedFxClient::set_virtual_color(const String &id, const String &type,
     doc["type"] = type;
     JsonObject cfg = doc.createNestedObject("config");
     cfg["background_color"] = color_hex;
-    String body;
-    serializeJson(doc, body);
-    String resp;
-    return net.put_json(_url("/api/virtuals/" + id + "/effects"), body, resp);
+    return _put("/api/virtuals/" + id + "/effects", doc);
 }
 
 int LedFxClient::clear_all_effects() {
     StaticJsonDocument<64> doc;
     doc["action"] = "clear_all_effects";
-    String body;
-    serializeJson(doc, body);
-    String resp;
-    return net.put_json(_url("/api/effects"), body, resp);
+    return _put("/api/effects", doc);
 }
 
 // LedFx's /api/effects bulk actions (apply_global) return HTTP 200 even when
@@ -229,10 +217,7 @@ int LedFxClient::apply_global(const String &json) {
 int LedFxClient::pause_all(bool paused) {
     StaticJsonDocument<64> doc;
     doc["paused"] = paused;
-    String body;
-    serializeJson(doc, body);
-    String resp;
-    return net.put_json(_url("/api/virtuals"), body, resp);
+    return _put("/api/virtuals", doc);
 }
 
 int LedFxClient::set_global_brightness(int pct) {
@@ -240,10 +225,7 @@ int LedFxClient::set_global_brightness(int pct) {
     if (pct > 100) pct = 100;
     StaticJsonDocument<64> doc;
     doc["global_brightness"] = pct / 100.0f;
-    String body;
-    serializeJson(doc, body);
-    String resp;
-    return net.put_json(_url("/api/config"), body, resp);
+    return _put("/api/config", doc);
 }
 
 int LedFxClient::fetch_global_brightness(int &pct) {
@@ -265,9 +247,6 @@ int LedFxClient::set_gradient(const String &name) {
     StaticJsonDocument<128> doc;
     doc["action"] = "apply_global";
     doc["gradient"] = name;
-    String body;
-    serializeJson(doc, body);
     String resp;
-    int code = net.put_json(_url("/api/effects"), body, resp);
-    return interpret_effects_result(code, resp);
+    return interpret_effects_result(_put("/api/effects", doc, &resp), resp);
 }

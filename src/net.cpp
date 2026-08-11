@@ -12,10 +12,6 @@
 
 Net net;
 
-// Bound every HTTP call so a dead or slow LedFx server can never stall the
-// loop indefinitely (TCP connect + per-read timeout, in milliseconds).
-static const uint16_t HTTP_TIMEOUT_MS = 6000;
-
 bool Net::connect_wifi(const String &ssid, const String &pass, uint32_t timeout_ms) {
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid.c_str(), pass.c_str());
@@ -37,8 +33,8 @@ LoginStatus Net::login(const String &base_url, const String &user, const String 
     HTTPClient http;
     String url = base_url + "/api/auth/login";
     http.begin(url);
-    http.setConnectTimeout(HTTP_TIMEOUT_MS);
-    http.setTimeout(HTTP_TIMEOUT_MS);
+    http.setConnectTimeout(NET_HTTP_TIMEOUT_MS);
+    http.setTimeout(NET_HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
 
     StaticJsonDocument<256> doc;
@@ -77,8 +73,8 @@ int Net::request(const char *method, const String &url, const String &body, Stri
     for (int attempt = 0; attempt < 2; attempt++) {
         HTTPClient http;
         http.begin(url);
-        http.setConnectTimeout(HTTP_TIMEOUT_MS);
-        http.setTimeout(HTTP_TIMEOUT_MS);
+        http.setConnectTimeout(NET_HTTP_TIMEOUT_MS);
+        http.setTimeout(NET_HTTP_TIMEOUT_MS);
         if (_token.length()) http.addHeader("Authorization", "Bearer " + _token);
         http.addHeader("Content-Type", "application/json");
         int code;
@@ -104,10 +100,6 @@ int Net::request(const char *method, const String &url, const String &body, Stri
 
 int Net::get(const String &url, String &body) {
     return request("GET", url, "", body);
-}
-
-int Net::post_json(const String &url, const String &json, String &body) {
-    return request("POST", url, json, body);
 }
 
 int Net::put_json(const String &url, const String &json, String &body) {

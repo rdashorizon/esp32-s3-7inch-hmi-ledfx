@@ -6,20 +6,14 @@
 // ---------------------------------------------------------------------------
 #include "ui_theme.h"
 #include "ui.h"             // ui_status_label() getter
-#include "ui_global.h"      // ui_global_conn_dot() getter + ui_global::apply_theme()
+#include "ui_global.h"      // ui_global::apply_theme()
 #include "ui_scenes.h"      // ui_scenes::apply_theme()
 #include "ui_virtuals.h"    // ui_virtuals::apply_theme()
 #include "ui_color.h"       // ui_color::apply_theme()
-#include <Arduino.h>       // millis
+#include <Arduino.h>       // snprintf
 
 // ---- Module-static state --------------------------------------------------
 static Theme s_theme;
-
-// Live-apply debounce. Rapid taps (user clicking through accent presets)
-// shouldn't fire a full repaint on every click. Real-world usage
-// (pick a theme, look at it, pick another) won't hit the throttle.
-static uint32_t s_last_apply_ms = 0;
-static const uint32_t APPLY_DEBOUNCE_MS = 200;
 
 const Theme &ui_theme_current() { return s_theme; }
 
@@ -102,16 +96,19 @@ uint32_t ui_theme_border()         { return current_palette().border; }
 // ---- Setup ----------------------------------------------------------------
 void ui_theme_setup() {
     s_theme = config_load_theme();
-    s_last_apply_ms = 0;  // allow the first apply
 }
 
 // ---- Public API ------------------------------------------------------------
 void ui_theme_set_and_apply(const Theme &t) {
+    // No debounce here. The previous version assigned s_theme and *then*
+    // returned early on a ~200 ms throttle, skipping both the NVS write and
+    // the repaint — so a quick second tap left the in-memory theme disagreeing
+    // with both the screen and NVS, and the change was lost on reboot.
+    // Repainting a few dozen widgets is cheap; NVS is only written when the
+    // value actually changes, so tapping through the presets costs nothing.
+    bool changed = (t.mode != s_theme.mode) || (t.accent != s_theme.accent);
     s_theme = t;
-    uint32_t now = millis();
-    if (now - s_last_apply_ms < APPLY_DEBOUNCE_MS) return;
-    s_last_apply_ms = now;
-    config_save_theme(s_theme);
+    if (changed) config_save_theme(s_theme);
     ui_theme_apply();
     // Visual confirmation: paint the bottom status label with the new
     // theme summary so the user has an explicit "yes, that saved" signal
@@ -126,23 +123,17 @@ void ui_theme_set_and_apply(const Theme &t) {
 void ui_theme_apply() {
     const Palette &p = current_palette();
 
+    // The root screen's ground. Without this, switching to Light mode repainted
+    // every widget but left the whole app sitting on the dark background.
+    lv_obj_t *root = ui_root();
+    if (root) lv_obj_set_style_bg_color(root, lv_color_hex(p.root_bg), 0);
+
     // Cross-screen persistent widgets.
     lv_obj_t *status = ui_status_label();
     if (status) {
         lv_obj_set_style_bg_color(status, lv_color_hex(p.root_bg), 0);
         lv_obj_set_style_text_color(status, lv_color_hex(p.text_muted), 0);
     }
-    lv_obj_t *dot = ui_global_conn_dot();
-    if (dot) {
-        // The conn-dot has two colors based on link state. Use the accent for
-        // "connected" and the panel_alt for "disconnected"; in Light mode
-        // the accent reads darker-green so we tweak it for legibility.
-        lv_color_t connected_color = (s_theme.mode == ThemeMode::LIGHT)
-            ? lv_color_hex(0x22aa44)
-            : lv_color_hex(ui_theme_accent_rgb565());
-        lv_obj_set_style_text_color(dot, connected_color, 0);
-    }
-
     // Per-screen apply_theme() hooks (added in Tier 1.3 — the ui_scenes,
     // ui_virtuals, ui_color namespaces expose void apply_theme() functions).
     ui_scenes::apply_theme();

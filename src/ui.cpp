@@ -35,6 +35,7 @@
 #include "ui_virtuals.h"  // Virtuals tab + pause-all switch
 #include "ui_color.h"     // Color picker tab
 #include "ui_overlay.h"   // slow-network overlay
+#include "ui_theme.h"     // ui_theme_root_bg() for the root ground color
 #include <ArduinoJson.h>
 #include <stdarg.h>       // va_list for ui_show_status_fmt()
 
@@ -60,20 +61,13 @@ static const uint32_t RESULT_PUMP_MS = 80;
 // respectively; this file is just the glue (tabview setup, result pump,
 // status bar, splash).
 
-// Show/hide an optional widget (spinner, error banner). Per-screen modules
-// have their own local obj_show helpers — this one stays for any future
-// shared use.
-static void obj_show(lv_obj_t *o, bool show) {
-    if (!o) return;
-    if (show) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
-    else      lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
-}
-
 // Enqueue a refresh for whichever data screen is currently in front.
 static void request_active_screen(void) {
-    uint32_t idx = lv_tabview_get_tab_act(s_tabview);
-    if (idx == 0) ui_scenes_request_refresh();
-    else if (idx == 1) ui_virtuals_request_refresh();
+    switch (lv_tabview_get_tab_act(s_tabview)) {
+        case UI_TAB_SCENES:   ui_scenes_request_refresh();   break;
+        case UI_TAB_VIRTUALS: ui_virtuals_request_refresh(); break;
+        default: break;  // Color / Global carry no fetched list of their own
+    }
 }
 
 // Periodic refresh of the front data screen, plus a status tick.
@@ -101,23 +95,20 @@ static void result_pump_cb(lv_timer_t *t) {
                                          static_cast<VirtualInfo *>(r.data),
                                          r.globals, r.msg);
                 break;
-            case RES_ACTION:
+            case RES_ACTION: {
                 ui_show_status(r.msg, r.status != 200);
-                // If the Color tab is in front and the user just sent a
-                // color apply from it, surface the result on the tab itself
-                // (transient banner) — the bottom status bar is easy to miss
-                // while the user's eyes are on the colorwheel.
-                // Tab index 2 = Color (see ui_init(): Scenes/Virtuals/Color/Global).
-                if (lv_tabview_get_tab_act(s_tabview) == 2) {
+                // Also surface the result on the tab the user is looking at —
+                // the bottom status bar is easy to miss while their eyes are
+                // on the colorwheel or the virtuals list.
+                uint32_t tab = lv_tabview_get_tab_act(s_tabview);
+                if (tab == UI_TAB_COLOR) {
                     ui_color_pump_result(r.status, r.msg);
-                }
-                // Same pattern for the Virtuals tab (Tier 1.6) — covers
-                // color-set failures, randomize failures, clear-all failures,
-                // and toggle-virtual failures. Tab index 1 = Virtuals.
-                else if (lv_tabview_get_tab_act(s_tabview) == 1) {
+                } else if (tab == UI_TAB_VIRTUALS) {
+                    // Covers color-set, randomize, clear-all and toggle failures.
                     ui_virtuals_pump_action_result(r.status, r.msg);
                 }
                 break;
+            }
             case RES_CONN:
                 ui_show_status(r.msg, !r.connected);
                 ui_global_set_link(r.connected);
@@ -193,20 +184,36 @@ static void build_global_screen(void) {
 
 // ---- Tab switching ---------------------------------------------------------
 static void tab_changed_cb(lv_event_t *e) {
-    lv_obj_t *btns = lv_event_get_target(e);
-    uint32_t idx = lv_tabview_get_tab_act(btns);
+    uint32_t idx = lv_tabview_get_tab_act(lv_event_get_target(e));
     config_store.save_last_tab((uint8_t)idx);  // remember across reboots
-    if (idx == 0) ui_scenes_request_refresh();
-    if (idx == 1) ui_virtuals_request_refresh();
-    if (idx == 2) { ui_virtuals_request_refresh(); ui_global_status_tick(); }  // refresh globals
+    switch (idx) {
+        case UI_TAB_SCENES:
+            ui_scenes_request_refresh();
+            break;
+        case UI_TAB_VIRTUALS:
+            ui_virtuals_request_refresh();
+            break;
+        case UI_TAB_COLOR:
+            // The Color tab has no list of its own, but /api/virtuals also
+            // carries the global state the Global tab's controls read.
+            ui_virtuals_request_refresh();
+            ui_global_status_tick();
+            break;
+        default:
+            break;
+    }
 }
 
 // ---- Init ------------------------------------------------------------------
 void ui_init(void) {
     s_root = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(s_root, lv_color_hex(0x0d0d14), 0);  // dark ground
+    // Ground color comes from the theme (loaded by ui_theme_setup() before
+    // this runs), not a hardcoded dark hex — otherwise Light mode leaves the
+    // whole app on a dark background.
+    lv_obj_set_style_bg_color(s_root, lv_color_hex(ui_theme_root_bg()), 0);
     lv_scr_load(s_root);
 
+    // Tab creation order must match the UiTab enum in ui.h.
     s_tabview = lv_tabview_create(s_root, LV_DIR_TOP, 40);
     s_tab_scenes   = lv_tabview_add_tab(s_tabview, "Scenes");
     s_tab_virtuals = lv_tabview_add_tab(s_tabview, "Virtuals");
@@ -215,11 +222,15 @@ void ui_init(void) {
     // Restore the last-selected tab (default Scenes). This fires the
     // LV_EVENT_VALUE_CHANGED callback, which also kicks off the per-tab
     // refresh — the duplicate fetch with the one below is harmless.
-    lv_tabview_set_act(s_tabview, config_store.load_last_tab(0), LV_ANIM_OFF);
+    // ui.h owns the valid tab range, so the clamp lives here rather than in
+    // the config store.
+    uint8_t last_tab = config_store.load_last_tab(UI_TAB_SCENES);
+    if (last_tab >= UI_TAB_COUNT) last_tab = UI_TAB_SCENES;
+    lv_tabview_set_act(s_tabview, last_tab, LV_ANIM_OFF);
     lv_obj_add_event_cb(s_tabview, tab_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     // Status bar at the bottom
-    s_status_label = lv_label_create(lv_scr_act());
+    s_status_label = lv_label_create(s_root);
     lv_obj_set_width(s_status_label, 800);
     lv_obj_align(s_status_label, LV_ALIGN_BOTTOM_LEFT, 8, -4);
     lv_label_set_text(s_status_label, "Ready");
@@ -260,16 +271,13 @@ void ui_show_status(const char *msg, bool is_error) {
 // printf-style variant — avoids the temporary String allocation that
 // ("Foo: " + name).c_str() would otherwise create on every event.
 void ui_show_status_fmt(bool is_error, const char *fmt, ...) {
-    static char buf[96];
+    char buf[96];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     ui_show_status(buf, is_error);
 }
-
-void ui_refresh_scenes(void)   { ui_scenes_request_refresh(); }
-void ui_refresh_virtuals(void) { ui_virtuals_request_refresh(); }
 
 bool ui_submit(const Request &req) {
     bool ok = worker_submit(req);

@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 #include "ui_scenes.h"
 #include "ui.h"        // ui_show_status, ui_submit (for the overlay), ui_global_mark_refreshed
+#include "ui_common.h" // ui_obj_show
 #include "worker.h"    // worker_submit, REQ_*
 #include "ui_global.h" // ui_global_mark_refreshed
 #include "ui_theme.h"  // ui_theme_*() palette accessors (Tier 1.3)
@@ -24,13 +25,6 @@ static int s_scene_count = 0;
 static lv_coord_t s_scene_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1),
                                        LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
 static lv_coord_t s_scene_row_dsc[10] = {LV_GRID_TEMPLATE_LAST};  // filled per render
-
-// ---- Helpers ---------------------------------------------------------------
-static void obj_show(lv_obj_t *o, bool show) {
-    if (!o) return;
-    if (show) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
-    else      lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
-}
 
 // ---- Event handlers --------------------------------------------------------
 static void scene_btn_clicked(lv_event_t *e) {
@@ -87,8 +81,6 @@ static void render_scene_grid(void) {
             lv_obj_set_style_border_width(btn, 2, 0);
         }
     }
-    ui_show_status(s_scene_count ? "Scenes refreshed" : "No scenes found");
-    ui_global_mark_refreshed();
 }
 
 // ---- Public API ------------------------------------------------------------
@@ -115,8 +107,8 @@ void ui_scenes_build(lv_obj_t *parent) {
 
 void ui_scenes_request_refresh(void) {
     if (ui_submit(req_simple(REQ_FETCH_SCENES))) {
-        obj_show(s_scene_spinner, true);
-        obj_show(s_scene_error, false);
+        ui_obj_show(s_scene_spinner, true);
+        ui_obj_show(s_scene_error, false);
         ui_show_status("Refreshing scenes…");
     }
 }
@@ -125,16 +117,20 @@ void ui_scenes_pump_result(int status, int count, SceneInfo *data, const char *e
     delete[] s_scenes;  // release the previous list
     s_scenes = data;
     s_scene_count = count;
-    obj_show(s_scene_spinner, false);
+    ui_obj_show(s_scene_spinner, false);
     if (status == 200) {
-        obj_show(s_scene_error, false);
+        ui_obj_show(s_scene_error, false);
         render_scene_grid();
+        // Post-fetch bookkeeping lives here, not in render_scene_grid(): the
+        // theme hook also re-renders, and that isn't a data refresh.
+        ui_show_status(s_scene_count ? "Scenes refreshed" : "No scenes found");
+        ui_global_mark_refreshed();
     } else {
         lv_obj_clean(s_scene_grid);
         if (s_scene_error)
             lv_label_set_text(s_scene_error,
                 (String(LV_SYMBOL_WARNING "  ") + (err && err[0] ? err : "Couldn't reach LedFx")).c_str());
-        obj_show(s_scene_error, true);
+        ui_obj_show(s_scene_error, true);
         ui_show_status(err && err[0] ? err : "Failed to fetch scenes", true);
     }
 }
@@ -149,10 +145,11 @@ void ui_scenes_apply_theme(void) {
         lv_obj_set_style_text_color(s_scene_error,
             lv_color_hex(ui_theme_text_error()), 0);
     }
-    // The scene grid is rebuilt by render_scene_grid() on every fetch —
-    // invalidating the container is enough to make the next render pick up
-    // the new accent via the build-time `ui_theme_accent_rgb565()` call.
-    if (s_scene_grid) lv_obj_invalidate(s_scene_grid);
+    // The active-scene highlight is baked into each button at build time from
+    // ui_theme_accent_rgb565(), so the grid has to be rebuilt — invalidating
+    // only marks the area dirty and would leave the old accent on screen until
+    // the next fetch (up to AUTO_REFRESH_MS away).
+    if (s_scene_grid) render_scene_grid();
 }
 
 namespace ui_scenes {

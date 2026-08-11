@@ -5,7 +5,13 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include "net.h"   // for the `net` singleton used by is_connected()
+#include "net.h"   // LoginStatus, and the `net` singleton the calls run over
+
+// Upper bound on the scenes / virtuals we keep from a response. A typical
+// LedFx install has at most a handful of either. The Scenes grid sizes its
+// row descriptor from this (see ui_scenes.cpp), so raising it means revisiting
+// that array too.
+static const int LEDFX_MAX_ITEMS = 32;
 
 struct SceneInfo {
     String id;
@@ -45,7 +51,14 @@ public:
     // Performs /api/auth/login and returns the outcome (see LoginStatus in net.h).
     LoginStatus connect(const String &user, const String &pass);
 
-    // Returns 0 on success, HTTP status on failure.
+    // Every call below returns the HTTP status code: 200 on success, the
+    // server's code on an HTTP failure, or 500 when the response couldn't be
+    // parsed / allocated.
+    //
+    // fetch_scenes / fetch_virtuals allocate `out` with new[] and hand
+    // ownership to the caller, which must release it with delete[] (the
+    // structs hold String members, so free() would leak). At most
+    // LEDFX_MAX_ITEMS entries are returned.
     int fetch_scenes(SceneInfo *&out, int &count);
     // When `globals` is provided, it is also filled from the same response.
     int fetch_virtuals(VirtualInfo *&out, int &count, GlobalsState *globals = nullptr);
@@ -75,11 +88,12 @@ public:
     int set_global_brightness(int pct);
     int fetch_global_brightness(int &pct);
 
-    bool is_connected() const { return net.has_token(); }
-
 private:
     String _base;
     String _url(const String &path) const { return _base + path; }
+    // Serialize + PUT. `resp_out` is only needed by callers that inspect the
+    // response body (the /api/effects bulk actions).
+    int _put(const String &path, const JsonDocument &doc, String *resp_out = nullptr);
 };
 
 extern LedFxClient g_ledfx;

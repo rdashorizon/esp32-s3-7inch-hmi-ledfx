@@ -35,8 +35,9 @@ void ui_virtuals_pump_result(int status, int count, VirtualInfo *data,
 void ui_virtuals_pump_action_result(int status, const char *msg);
 
 // Theme support: re-color the persistent widgets (spinner, error banner,
-// in-tab action banner) and invalidate the virtual list so the next render
-// uses the current theme colors.
+// in-tab action banner) and re-render the virtual list. Row swatch borders
+// and the confirmation flash are baked in at build time, so the list has to
+// be rebuilt rather than merely invalidated.
 void ui_virtuals_apply_theme(void);
 
 namespace ui_virtuals { void apply_theme(); }

@@ -29,14 +29,13 @@ uint32_t ui_virtuals_color_gradient_to_rgb565(const String &name);
 // The caller passes the VirtualInfo (rather than the module reading it
 // from `ui_virtuals`'s internal array) to keep the modules decoupled —
 // `ui_virtuals` owns the virtual list, `ui_virtuals_color` owns the modal.
+// `v` is only borrowed for the duration of the call: the modal copies the id
+// and effect type it needs, because the caller's array is freed and replaced
+// on the next fetch, which can land while the modal is still open.
 void ui_virtuals_color_open(int idx, const VirtualInfo &v);
 
-// Index of the most recent successful apply, or -1 if none. The parent
-// Virtuals module reads this on each render to flash the updated row's
-// border green for ~1.5 s.
-int ui_virtuals_color_last_set_idx(void);
-
 // True if the row at `idx` was just color-applied (within FLASH_TIMEOUT_MS
-// of millis()). Encapsulates the flash-window check so the parent module
-// doesn't need to know the timestamp.
+// of millis()). The parent Virtuals module calls this on each render to flash
+// the updated row's border in the accent color. Encapsulates the flash-window
+// check so the parent doesn't need to know the timestamp.
 bool ui_virtuals_color_row_is_recent(int idx);

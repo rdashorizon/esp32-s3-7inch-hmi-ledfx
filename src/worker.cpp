@@ -24,9 +24,6 @@ static TaskHandle_t  s_task  = nullptr;  // captured so OTA can suspend us
 static const int      QUEUE_LEN   = 12;
 static const uint32_t WORKER_STACK = 12288;  // HTTP client + JSON parse headroom
 static const TickType_t IDLE_TICKS = pdMS_TO_TICKS(3000);  // maintenance cadence
-static const uint16_t HTTP_TIMEOUT_MS = 6000;  // matches net.cpp; copied here so
-                                                // the test-connection probe
-                                                // doesn't need to include net.cpp
 
 // ---- Result posting (worker side) -----------------------------------------
 static void post_action(int status, const char *msg) {
@@ -46,13 +43,16 @@ static void post_conn(bool connected, const char *msg) {
 }
 
 // Post a data array, transferring ownership. If the queue can't take it, free
-// the array here so it never leaks.
-static void post_data(ResType type, int status, void *data, int count, const char *err) {
+// the array here so it never leaks. `globals` is only meaningful for
+// RES_VIRTUALS; pass nullptr otherwise.
+static void post_data(ResType type, int status, void *data, int count,
+                      const char *err, const GlobalsState *globals = nullptr) {
     Result r{};
     r.type = type;
     r.status = status;
     r.data = data;
     r.count = count;
+    if (globals) r.globals = *globals;
     if (status != 200 && err) strncpy(r.msg, err, sizeof(r.msg) - 1);
     if (xQueueSend(s_res_q, &r, 0) != pdTRUE) {
         if (type == RES_SCENES) delete[] static_cast<SceneInfo *>(data);
@@ -135,18 +135,66 @@ static void do_fetch_virtuals() {
         Serial.printf("[net] global_brightness = %d%%\n", bpct);
     }
     // Post the list plus the global state (pause/brightness/mirror/flip).
-    Result r{};
-    r.type = RES_VIRTUALS;
-    r.status = code;
-    r.data = arr;
-    r.count = n;
-    r.globals = g;
-    if (code != 200) strncpy(r.msg, "Failed to fetch virtuals", sizeof(r.msg) - 1);
-    if (xQueueSend(s_res_q, &r, 0) != pdTRUE) delete[] arr;  // avoid leak if full
+    post_data(RES_VIRTUALS, code, arr, n, "Failed to fetch virtuals", &g);
 }
 
 // ---- Request handling ------------------------------------------------------
+// Probe a candidate LedFx URL using the current WiFi: unpack the payload, do a
+// tokenless GET /api/scenes, and post a one-shot RES_CONN-style result. Nothing
+// is persisted and the device does not reboot.
+static void do_test_connection(const Request &req) {
+    StaticJsonDocument<256> doc;
+    if (deserializeJson(doc, req.payload) != DeserializationError::Ok) {
+        post_conn(false, "Test: bad payload");
+        return;
+    }
+    String url = doc["url"] | "";
+    String user = doc["user"] | "";
+    if (url.isEmpty()) {
+        post_conn(false, "Test: missing URL");
+        return;
+    }
+    Serial.printf("[test] probing %s (auth=%s)\n", url.c_str(),
+                  user.isEmpty() ? "no" : "yes");
+
+    if (!net.wifi_connected()) {
+        post_conn(false, "Test: WiFi down");
+        return;
+    }
+
+    // Tokenless probe: the goal is to verify reachability + the auth path,
+    // not to fetch data, so we deliberately don't try to log in first.
+    HTTPClient http;
+    http.begin(url + "/api/scenes");
+    http.setConnectTimeout(NET_HTTP_TIMEOUT_MS);
+    http.setTimeout(NET_HTTP_TIMEOUT_MS);
+    int code = http.GET();
+    http.end();
+
+    if (code == 200) {
+        post_conn(true, "Test: OK (200)");
+    } else if (code == 401 || code == 403) {
+        post_conn(false, "Test: 401/403 — wrong credentials");
+    } else if (code == 404) {
+        post_conn(false, "Test: 404 — URL path wrong");
+    } else if (code > 0) {
+        post_conn(false, ("Test: HTTP " + String(code)).c_str());
+    } else {
+        post_conn(false, "Test: unreachable (timeout/DNS)");
+    }
+}
+
 static void handle(const Request &req) {
+    // Handled before the ensure_connected() gate below: the whole point of the
+    // Test button is to diagnose a config that does NOT currently work, and
+    // ensure_connected() fails on exactly those (bad credentials, wrong URL).
+    // Gating it made the button a no-op precisely when it was needed. It does
+    // its own WiFi check.
+    if (req.type == REQ_TEST_CONNECTION) {
+        do_test_connection(req);
+        return;
+    }
+
     if (!ensure_connected()) {
         // Can't do anything useful without a link; RES_CONN already told the UI.
         return;
@@ -161,53 +209,8 @@ static void handle(const Request &req) {
                               ? "yes" : "none");
             break;
 
-        case REQ_TEST_CONNECTION: {
-            // Probe the supplied LedFx URL using the current WiFi. Parse the
-            // payload back into url/user/pass, do a tokenless GET /api/scenes,
-            // and post a one-shot RES_CONN-style result. The UI displays the
-            // outcome without rebooting or persisting anything.
-            StaticJsonDocument<256> doc;
-            if (deserializeJson(doc, req.payload) != DeserializationError::Ok) {
-                post_conn(false, "Test: bad payload");
-                break;
-            }
-            String url = doc["url"] | "";
-            String user = doc["user"] | "";
-            String pass = doc["password"] | "";
-            if (url.isEmpty()) {
-                post_conn(false, "Test: missing URL");
-                break;
-            }
-            Serial.printf("[test] probing %s (auth=%s)\n", url.c_str(),
-                          user.isEmpty() ? "no" : "yes");
-
-            if (!net.wifi_connected()) {
-                post_conn(false, "Test: WiFi down");
-                break;
-            }
-
-            // Tokenless probe: GET /api/scenes. Don't try to log in — the goal
-            // is to verify reachability + auth path, not to fetch data.
-            HTTPClient http;
-            http.begin(url + "/api/scenes");
-            http.setConnectTimeout(HTTP_TIMEOUT_MS);
-            http.setTimeout(HTTP_TIMEOUT_MS);
-            int code = http.GET();
-            http.end();
-
-            if (code == 200) {
-                post_conn(true, "Test: OK (200)");
-            } else if (code == 401 || code == 403) {
-                post_conn(false, "Test: 401/403 — wrong credentials");
-            } else if (code == 404) {
-                post_conn(false, "Test: 404 — URL path wrong");
-            } else if (code > 0) {
-                post_conn(false, ("Test: HTTP " + String(code)).c_str());
-            } else {
-                post_conn(false, "Test: unreachable (timeout/DNS)");
-            }
-            break;
-        }
+        case REQ_TEST_CONNECTION:
+            break;  // handled above, before the connection gate
 
         case REQ_FETCH_SCENES:
             do_fetch_scenes();

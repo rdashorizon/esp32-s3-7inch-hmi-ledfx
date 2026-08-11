@@ -20,7 +20,6 @@ static const char *K_WPASS = "wifi_pass";
 static const char *K_URL  = "ledfx_url";
 static const char *K_USER = "ledfx_user";
 static const char *K_LPASS = "ledfx_pass";
-static const char *K_AP_TOUT = "ap_timeout";
 static const char *K_SCRBRI = "scr_bright";
 static const char *K_LASTTAB = "last_tab";
 static const char *K_LASTCLR = "last_color";
@@ -81,10 +80,16 @@ String config_device_hex() {
     return String(buf);
 }
 
-// The per-device AP password, printed on the captive-portal form so the user
-// knows what to type when joining the AP.
+// The per-device AP password, printed to Serial and onto the captive-portal
+// form so the user knows what to type when joining the AP.
+//
+// This MUST be the exact string passed to WiFi.softAP(). It previously
+// returned the bare 6-hex device id while softAP() was given
+// `hex + "hmi2026"`, so both the serial log and the form advertised a
+// password that does not work. The suffix also clears WPA2's 8-character
+// minimum, which the bare hex does not.
 static String derive_ap_psk() {
-    return config_device_hex();
+    return config_ota_password();
 }
 
 // mDNS hostname advertised for network OTA: "ledfx-hmi-<hex>".
@@ -92,9 +97,9 @@ String config_ota_hostname() {
     return "ledfx-hmi-" + config_device_hex();
 }
 
-// OTA password. Same 8+-char scheme as the softAP password (6-hex + a fixed
-// suffix so it clears the WPA2 minimum and is long enough to matter), so a
-// single per-device secret guards both the setup AP and network reflashing.
+// The single per-device secret: 6-hex device id + a fixed suffix (so it clears
+// WPA2's 8-character minimum). Guards both the setup AP and network
+// reflashing — see derive_ap_psk().
 String config_ota_password() {
     return config_device_hex() + "hmi2026";
 }
@@ -116,9 +121,7 @@ bool ConfigStore::load(Config &out) {
     out.ledfx_user = prefs.getString(K_USER, "");
     out.ledfx_pass = prefs.getString(K_LPASS, "");
     prefs.end();
-    _has_wifi = out.wifi_ssid.length() > 0;
-    _has_ledfx = out.ledfx_url.length() > 0;
-    return _has_wifi && _has_ledfx;
+    return out.wifi_ssid.length() > 0 && out.ledfx_url.length() > 0;
 }
 
 void ConfigStore::save(const Config &cfg) {
@@ -130,8 +133,6 @@ void ConfigStore::save(const Config &cfg) {
     prefs.putString(K_USER, cfg.ledfx_user);
     prefs.putString(K_LPASS, cfg.ledfx_pass);
     prefs.end();
-    _has_wifi = cfg.wifi_ssid.length() > 0;
-    _has_ledfx = cfg.ledfx_url.length() > 0;
 }
 
 void ConfigStore::clear() {
@@ -139,7 +140,6 @@ void ConfigStore::clear() {
     prefs.begin(NVS_NS, false);
     prefs.clear();
     prefs.end();
-    _has_wifi = _has_ledfx = false;
 }
 
 uint8_t ConfigStore::load_screen_brightness(uint8_t def) {
@@ -164,9 +164,9 @@ uint8_t ConfigStore::load_last_tab(uint8_t def) {
     prefs.begin(NVS_NS, true);
     uint8_t idx = prefs.getUChar(K_LASTTAB, def);
     prefs.end();
-    // Clamp to a sane range; corrupted NVS could land us anywhere. Four
-    // tabs total (Scenes/Virtuals/Color/Global).
-    if (idx > 3) idx = def;
+    // Returned raw. The valid range belongs to the UI (see UiTab in ui.h),
+    // which clamps it — duplicating the bound here would just rot when a tab
+    // is added.
     return idx;
 }
 
@@ -243,10 +243,10 @@ bool ConfigStore::run_captive_portal(uint32_t timeout_seconds) {
 
     WiFi.mode(WIFI_AP);
     WiFi.softAPConfig(AP_IP, AP_IP, IPAddress(255, 255, 255, 0));
-    // WPA2 with the per-device PSK (min length 8 per the standard — our 6-char
-    // hex is too short for WPA2, so we extend with a fixed suffix). Anyone
-    // nearby still has to know the device-specific prefix to connect.
-    WiFi.softAP("ledfx-hmi-setup", (psk + "hmi2026").c_str());
+    // WPA2 with the per-device PSK. Anyone nearby still has to know the
+    // device-specific hex prefix to connect. Same string that was printed and
+    // is rendered onto the form below — do not re-derive it here.
+    WiFi.softAP("ledfx-hmi-setup", psk.c_str());
 
     DNSServer dns;
     dns.start(DNS_PORT, "*", AP_IP);

@@ -35,8 +35,8 @@ public:
     uint8_t load_screen_brightness(uint8_t def = 100);
     void    save_screen_brightness(uint8_t pct);
 
-    // Last-selected tab index (0 = Scenes, 1 = Virtuals, 2 = Color, 3 = Global).
-    // Returns `def` when never set.
+    // Last-selected tab index (see UiTab in ui.h). Returns `def` when never
+    // set; the value is otherwise returned as stored, and the caller clamps.
     uint8_t load_last_tab(uint8_t def = 0);
     void    save_last_tab(uint8_t idx);
 
@@ -55,12 +55,6 @@ public:
     // or until timeout_seconds elapses. Returns true if a config was saved.
     bool run_captive_portal(uint32_t timeout_seconds = 0);
 
-    bool has_wifi() const { return _has_wifi; }
-    bool has_ledfx() const { return _has_ledfx; }
-
-private:
-    bool _has_wifi = false;
-    bool _has_ledfx = false;
 };
 
 // URL sanity check — must start with http:// or https:// and have at least one
@@ -96,6 +90,7 @@ String config_device_hex();
 // Serial on boot and shown on the Global tab so the user can read them off the
 // device without a serial cable.
 String config_ota_hostname();   // "ledfx-hmi-<hex>"
-String config_ota_password();   // per-device OTA password
+// The per-device secret. Also the WPA2 password of the first-run setup AP.
+String config_ota_password();
 
 extern ConfigStore config_store;

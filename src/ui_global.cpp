@@ -26,9 +26,8 @@ static lv_obj_t *s_flip_sw   = nullptr;
 static lv_obj_t *s_gstatus_label = nullptr;
 // Persistent WiFi indicator on the top layer (always visible).
 static lv_obj_t *s_conn_dot = nullptr;
-// Theme picker widget refs (Tier 1.4). Held as static so the mode/accent
-// button lambdas can invalidate the picker rows after a tap, so the
-// "currently selected" highlight moves with the live theme.
+// Theme picker widget refs (Tier 1.4). Held as statics so apply_theme() can
+// move the "currently selected" highlight after a tap.
 static lv_obj_t *s_theme_box = nullptr;
 static lv_obj_t *s_theme_mode_btn_dark = nullptr;
 static lv_obj_t *s_theme_mode_btn_light = nullptr;
@@ -116,10 +115,16 @@ static void update_global_status(void) {
     lv_label_set_text(s_gstatus_label, s.c_str());
 }
 
+// Sole owner of the indicator's color — it depends on BOTH link state and
+// theme mode, so splitting it across two modules meant whichever ran last won.
+// Green/amber are status colors rather than theme accents; only the green is
+// darkened in Light mode, where the brighter one washes out.
 static void update_conn_indicator(void) {
     if (!s_conn_dot) return;
+    uint32_t connected = (ui_theme_current().mode == ThemeMode::LIGHT)
+                             ? 0x22aa44 : 0x33cc66;
     lv_obj_set_style_text_color(s_conn_dot,
-        s_link_ok ? lv_color_hex(0x33cc66) : lv_color_hex(0xd8a11a), 0);
+        lv_color_hex(s_link_ok ? connected : 0xd8a11a), 0);
 }
 
 // Reflect server global state onto the Global-screen controls. Programmatic
@@ -131,18 +136,6 @@ static void set_sw(lv_obj_t *sw, bool on) {
     if (!sw) return;
     if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
     else    lv_obj_clear_state(sw, LV_STATE_CHECKED);
-}
-static void apply_globals_to_ui(const GlobalsState &g, lv_obj_t *pause_sw) {
-    if (!g.valid) return;
-    set_sw(pause_sw, g.paused);
-    if (g.has_flags) {
-        set_sw(s_mirror_sw, g.mirror);
-        set_sw(s_flip_sw, g.flip);
-    }
-    if (g.has_brightness) {
-        if (s_bright_slider) lv_slider_set_value(s_bright_slider, g.brightness, LV_ANIM_OFF);
-        if (s_bright_value)  lv_label_set_text_fmt(s_bright_value, "%d%%", g.brightness);
-    }
 }
 
 // ---- Panel backlight slider + auto-dim -------------------------------------
@@ -324,36 +317,17 @@ void ui_global_build(lv_obj_t *parent) {
             ThemeMode m = (ThemeMode)(intptr_t)lv_obj_get_user_data(btn);
             Theme t = ui_theme_current();
             t.mode = m;
+            // ui_theme_set_and_apply() dispatches back into this module's
+            // apply_theme(), which moves the "selected" highlight.
             ui_theme_set_and_apply(t);
-            // Repaint mode row + accent row so the "currently selected"
-            // highlight moves. apply_theme() also restyles everything,
-            // but only this row's children need re-styling right now.
-            lv_obj_invalidate(s_theme_box);
         }, LV_EVENT_CLICKED, NULL);
-        // Initial label; the build picks up the right color when the
-        // row is invalidated below.
         lv_obj_t *l = lv_label_create(b);
         lv_label_set_text(l, lbl_text);
         lv_obj_center(l);
         return b;
     };
-    // First-pass styling: highlight the currently-selected button. The
-    // lambdas above invalidate s_theme_box on every tap, so the highlight
-    // moves via lv_obj_set_style_bg_color on each repaint (handled in
-    // ui_global_apply_theme()).
     make_mode_btn("Dark",  ThemeMode::DARK,  &s_theme_mode_btn_dark);
     make_mode_btn("Light", ThemeMode::LIGHT, &s_theme_mode_btn_light);
-    {
-        Theme cur = ui_theme_current();
-        lv_obj_set_style_bg_color(s_theme_mode_btn_dark,
-            (cur.mode == ThemeMode::DARK)
-                ? lv_color_hex(ui_theme_accent_rgb565())
-                : lv_color_hex(ui_theme_panel_alt()), 0);
-        lv_obj_set_style_bg_color(s_theme_mode_btn_light,
-            (cur.mode == ThemeMode::LIGHT)
-                ? lv_color_hex(ui_theme_accent_rgb565())
-                : lv_color_hex(ui_theme_panel_alt()), 0);
-    }
 
     lv_obj_t *accent_lbl = lv_label_create(s_theme_box);
     lv_label_set_text(accent_lbl, "Accent");
@@ -371,29 +345,21 @@ void ui_global_build(lv_obj_t *parent) {
         AccentColor::ORANGE, AccentColor::MAGENTA,
     };
     const char *accent_lbls[4] = { "Blue", "Green", "Orange", "Magenta" };
-    {
-        Theme cur = ui_theme_current();
-        for (int i = 0; i < 4; i++) {
-            lv_obj_t *b = lv_btn_create(accent_row);
-            lv_obj_set_size(b, 90, 36);
-            lv_obj_set_user_data(b, (void *)(intptr_t)accent_order[i]);
-            lv_obj_t *l = lv_label_create(b);
-            lv_label_set_text(l, accent_lbls[i]);
-            lv_obj_center(l);
-            s_theme_accent_btn[i] = b;
-            lv_obj_set_style_bg_color(b,
-                (cur.accent == accent_order[i])
-                    ? lv_color_hex(ui_theme_accent_rgb565())
-                    : lv_color_hex(ui_theme_panel_alt()), 0);
-            lv_obj_add_event_cb(b, [](lv_event_t *e) {
-                lv_obj_t *btn = lv_event_get_target(e);
-                AccentColor a = (AccentColor)(intptr_t)lv_obj_get_user_data(btn);
-                Theme t = ui_theme_current();
-                t.accent = a;
-                ui_theme_set_and_apply(t);
-                lv_obj_invalidate(s_theme_box);
-            }, LV_EVENT_CLICKED, NULL);
-        }
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *b = lv_btn_create(accent_row);
+        lv_obj_set_size(b, 90, 36);
+        lv_obj_set_user_data(b, (void *)(intptr_t)accent_order[i]);
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_text(l, accent_lbls[i]);
+        lv_obj_center(l);
+        s_theme_accent_btn[i] = b;
+        lv_obj_add_event_cb(b, [](lv_event_t *e) {
+            lv_obj_t *btn = lv_event_get_target(e);
+            AccentColor a = (AccentColor)(intptr_t)lv_obj_get_user_data(btn);
+            Theme t = ui_theme_current();
+            t.accent = a;
+            ui_theme_set_and_apply(t);
+        }, LV_EVENT_CLICKED, NULL);
     }
 
     // Reset to defaults (Tier 2). Reverts to Dark + Blue and triggers the
@@ -416,7 +382,6 @@ void ui_global_build(lv_obj_t *parent) {
     // Connection / status row
     s_gstatus_label = lv_label_create(parent);
     lv_obj_set_width(s_gstatus_label, LV_PCT(100));
-    lv_obj_set_style_text_color(s_gstatus_label, lv_color_hex(0xaaaaaa), 0);
     update_global_status();
 
     // Persistent WiFi link indicator on the top layer (always visible).
@@ -424,6 +389,11 @@ void ui_global_build(lv_obj_t *parent) {
     lv_label_set_text(s_conn_dot, LV_SYMBOL_WIFI);
     lv_obj_align(s_conn_dot, LV_ALIGN_TOP_RIGHT, -12, 10);
     update_conn_indicator();
+
+    // First paint of everything theme-dependent (status row color, picker
+    // panel, selected-button highlight) goes through the same hook the Theme
+    // picker uses at runtime, so build and re-theme can't drift apart.
+    ui_global_apply_theme();
 }
 
 // ---- Theme support (Tier 1.4) -------------------------------------------
@@ -475,6 +445,8 @@ void ui_global_apply_theme(void) {
             lv_color_hex(ui_theme_border()), 0);
         restyle_picker_highlight();
     }
+    // Depends on the theme mode as well as the link state.
+    update_conn_indicator();
 }
 
 namespace ui_global {
@@ -485,8 +457,14 @@ void ui_global_apply_state(const GlobalsState &g) {
     // pause_sw is owned by the Virtuals module (Tier 1.3) — for now we don't
     // touch it here; callers pass it via ui_global_apply_state_with_pause()
     // if they need the pause-toggle synced.
-    set_sw(s_mirror_sw, g.mirror);
-    set_sw(s_flip_sw,   g.flip);
+    if (!g.valid) return;
+    // mirror/flip are only meaningful when an active effect supplied them.
+    // Writing them unconditionally forced both switches off on every refresh
+    // whenever nothing was active, contradicting the server.
+    if (g.has_flags) {
+        set_sw(s_mirror_sw, g.mirror);
+        set_sw(s_flip_sw,   g.flip);
+    }
     if (g.has_brightness) {
         if (s_bright_slider) lv_slider_set_value(s_bright_slider, g.brightness, LV_ANIM_OFF);
         if (s_bright_value)  lv_label_set_text_fmt(s_bright_value, "%d%%", g.brightness);
@@ -516,8 +494,6 @@ void ui_global_mark_refreshed(void) {
 void ui_global_status_tick(void) {
     update_global_status();
 }
-
-lv_obj_t *ui_global_conn_dot(void) { return s_conn_dot; }
 
 void ui_global_install_overlays(void) {
     install_splash();

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <WiFi.h>        // wifi_connected() calls WiFi.status() inline below
 #include <HTTPClient.h>
 
 // Login outcome. Distinguishing these lets the UI surface "wrong password"
@@ -19,6 +20,12 @@ enum class LoginStatus {
     INVALID_RESPONSE,  // 200 but body wasn't parseable as JSON / no token field
 };
 
+// Bounds every HTTP call (TCP connect + per-read), so a dead or slow LedFx
+// server can never stall a request indefinitely. Exposed because the worker's
+// one-shot connection probe builds its own HTTPClient and must use the same
+// budget.
+static const uint16_t NET_HTTP_TIMEOUT_MS = 6000;
+
 class Net {
 public:
     bool connect_wifi(const String &ssid, const String &pass, uint32_t timeout_ms = 15000);
@@ -32,10 +39,9 @@ public:
     bool has_token() const { return _token.length() > 0; }
     const String &token() const { return _token; }
 
-    // Get/POST/PUT helpers that inject the bearer token. On a 401/403 they
+    // GET/PUT helpers that inject the bearer token. On a 401/403 they
     // transparently re-login once with the cached credentials and retry.
     int get(const String &url, String &body);
-    int post_json(const String &url, const String &json, String &body);
     int put_json(const String &url, const String &json, String &body);
 
 private:

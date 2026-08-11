@@ -77,7 +77,10 @@ UI. The image is identical to the USB build — only the upload transport differ
 ## First-run setup
 
 On first power the board creates a WiFi access point named `ledfx-hmi-setup`.
-Connect to it with your phone or laptop, a captive portal will pop up. Enter:
+Its WPA2 password is the same per-device secret used for OTA — six hex
+characters derived from the chip's MAC plus a fixed suffix (e.g.
+`a1b2c3hmi2026`) — and it's printed to serial on boot. Connect to it with your
+phone or laptop, a captive portal will pop up. Enter:
 
 1. Your WiFi SSID and password (2.4 GHz WPA2 — the ESP32-S3 has no 5 GHz radio)
 2. Your LedFx server URL (e.g. `http://192.168.1.20:8888`)
@@ -111,7 +114,16 @@ src/
   ledfx.h/.cpp      REST client with named methods (fetch_scenes, activate_scene, …)
   worker.h/.cpp     FreeRTOS network task (core 0) + request/result queues
   ota.h/.cpp        network firmware updates (ArduinoOTA) + progress overlay
-  ui.h/.cpp         LVGL screens (Scenes / Virtuals / Global / Settings)
+  ui.h/.cpp         tabview shell, result pump, status bar
+  ui_common.h/.cpp  widgets shared by more than one tab (banner, color picker)
+  ui_scenes.*       Scenes tab
+  ui_virtuals.*     Virtuals tab
+  ui_virtuals_color.*  per-virtual color modal
+  ui_color.*        Color tab (global colorwheel)
+  ui_global.*       Global tab + WiFi indicator + auto-dim + splash
+  ui_settings.*     on-device settings editor (separate screen)
+  ui_theme.*        Dark/Light palettes + accent presets
+  ui_overlay.*      slow-network "still working…" veil
 ```
 
 Threading: LVGL renders and reads touch on core 1; all LedFx REST calls run on a
