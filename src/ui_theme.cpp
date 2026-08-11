@@ -93,9 +93,46 @@ uint32_t ui_theme_text_error()     { return current_palette().text_error; }
 uint32_t ui_theme_text_warn()      { return current_palette().text_warn; }
 uint32_t ui_theme_border()         { return current_palette().border; }
 
+// ---- LVGL's own theme ------------------------------------------------------
+// The palette above only covers widgets this app paints by hand — maybe a dozen
+// of them. Everything else (the tabview, every lv_obj_create container, every
+// button, switch, slider, textarea) is styled by LVGL's built-in theme, which
+// lv_disp_drv_register() installs as:
+//
+//     lv_theme_default_init(disp, BLUE, RED, LV_THEME_DEFAULT_DARK, font)
+//
+// LV_THEME_DEFAULT_DARK is a *compile-time* flag and defaults to 0. So until
+// this function existed, nearly every pixel on screen was locked to LVGL's
+// light theme with a blue primary, and flipping our Dark/Light mode repainted
+// only the handful of hand-styled widgets — which is why the Theme picker
+// looked like it did nothing.
+//
+// Re-calling lv_theme_default_init() is the supported way to change it at
+// runtime: it re-runs the theme's style_init() (leak-free — style_init_reset()
+// resets already-inited styles) and, because the display is already using this
+// theme, calls lv_obj_report_style_change(NULL) to restyle every live widget.
+//
+// Must run BEFORE the per-screen hooks below: those re-apply local styles, and
+// local styles win over theme styles, so the hand-painted accents have to land
+// on top of the fresh theme rather than under it.
+static void apply_lvgl_theme() {
+#if LV_USE_THEME_DEFAULT
+    lv_disp_t *disp = lv_disp_get_default();
+    if (!disp) return;
+    lv_theme_default_init(disp,
+                          lv_color_hex(ui_theme_accent_rgb565()),  // primary
+                          lv_palette_main(LV_PALETTE_GREY),        // secondary
+                          s_theme.mode == ThemeMode::DARK,
+                          LV_FONT_DEFAULT);
+#endif
+}
+
 // ---- Setup ----------------------------------------------------------------
 void ui_theme_setup() {
     s_theme = config_load_theme();
+    // Set LVGL's theme before ui_init() creates any widgets, so the first paint
+    // is already correct instead of being restyled a frame later.
+    apply_lvgl_theme();
 }
 
 // ---- Public API ------------------------------------------------------------
@@ -122,6 +159,9 @@ void ui_theme_set_and_apply(const Theme &t) {
 
 void ui_theme_apply() {
     const Palette &p = current_palette();
+
+    // Restyle every stock widget first (see apply_lvgl_theme).
+    apply_lvgl_theme();
 
     // The root screen's ground. Without this, switching to Light mode repainted
     // every widget but left the whole app sitting on the dark background.

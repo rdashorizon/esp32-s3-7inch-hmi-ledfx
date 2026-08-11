@@ -284,7 +284,11 @@ void ui_global_build(lv_obj_t *parent) {
     // to NVS + restyles every visible widget. The internal 200 ms debounce
     // keeps rapid taps from causing paint thrash.
     s_theme_box = lv_obj_create(parent);
-    lv_obj_set_size(s_theme_box, LV_PCT(100), 170);
+    // Height from content, not a fixed 170 px: two labels + two 40 px rows +
+    // a 36 px button + padding and flex gaps overflow that, and the box is
+    // non-scrollable, so the "Defaults" button was clipped off the bottom and
+    // could not be tapped.
+    lv_obj_set_size(s_theme_box, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(s_theme_box, LV_FLEX_FLOW_COLUMN);
     lv_obj_clear_flag(s_theme_box, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(s_theme_box, 8, 0);
